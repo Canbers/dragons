@@ -1,8 +1,9 @@
 require('dotenv').config()
 const mongoose = require('mongoose');
-const Ecosystem = require('../models/Ecosystem')
-const regionFactory = require('../../agents/world/factories/regionsFactory')
-const World = require('../models/World')
+const Ecosystem = require('../models/Ecosystem');
+const regionFactory = require('../../agents/world/factories/regionsFactory');
+const World = require('../models/World');
+const vectorService = require('../../services/vectorService')
 
 
 mongoose.connect('mongodb://127.0.0.1:27017/dragons')
@@ -40,9 +41,14 @@ mongoose.connect('mongodb://127.0.0.1:27017/dragons')
             }
         ]
         let ecoResult = await Ecosystem.insertMany(ecosystems);
-        let regionResults = await regionFactory.create(worldResult._id, [0,0]);
+        let originRegion = await regionFactory.create(worldResult._id, [0,0]);
 
-        await regionFactory.describe(regionResults._id);
+        let surroundingRegions = vectorService.getSurroundingVectors([0,0]);
+        for(let i = 0; i < surroundingRegions.length; i++) {
+            await regionFactory.create(worldResult._id, surroundingRegions[i]);
+        }
+
+        await regionFactory.describe(originRegion._id);
 
         process.exit();
     }

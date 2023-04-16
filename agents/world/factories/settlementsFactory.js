@@ -81,7 +81,9 @@ const describe = (settlements) => {
                     size: "256x256",
                 });
                 await Settlement.findByIdAndUpdate(settlements[count], {
-                    image: icon.data[0].url, ...p
+                    image: icon.data[0].url,
+                    described: true,
+                    ...p
                 });
                 count++;
             } catch (e) {

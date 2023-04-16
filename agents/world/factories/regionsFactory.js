@@ -34,9 +34,9 @@ const describe = (region_id) => {
         let promptResult = await gpt.prompt('gpt-3.5-turbo', `We are creating a story about ${region.world.name}: ${region.world.description}. Please create a name and description for a region within this world which is located in the ${region.ecosystem.name}. Please format it in JSON as follow: { "name": "<The name of the region>", "description": "<The long, two paragraph description of the region>", "short": "<A short, two sentance summary of the description>"}`);
         try {
             let p = JSON.parse(promptResult.content);
-            await Region.findByIdAndUpdate(region_id, p);
             let settlements = await Settlement.find({region: region_id});
             await settlement.describe(settlements.map((settlement) => {return settlement.id}));
+            await Region.findByIdAndUpdate(region_id, { described: true,... p});
             resolve();
         } catch (e) {
             reject(e)
