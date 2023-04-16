@@ -11,6 +11,8 @@
   "dependencies": {
     "express": "^4.18.2",
     "mongoose": "^7.0.3",
-    "uuidv4": "^6.2.13"
+    "uuidv4": "^6.2.13",
+    "openai": "^3.2.1",
+    "dotenv": "^16.0.3"
   }
 }
