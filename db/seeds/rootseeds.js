@@ -31,12 +31,9 @@ mongoose.connect('mongodb://127.0.0.1:27017/dragons')
             }
         ]
         let ecoResult = await Ecosystem.insertMany(ecosystems);
-        // let regResult = await Region.create({
-        //     name: 'Scandanavia',
-        //     ecosystem: ecoResult[0]._id,
-        //     world: worldResult._id
-        // });
-        Region.create(worldResult._id, [0,0])
+        await Region.create(worldResult._id, [0,0]);
+
+        process.exit();
     }
     
     );
