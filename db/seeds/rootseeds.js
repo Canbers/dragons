@@ -1,7 +1,7 @@
 require('dotenv').config()
 const mongoose = require('mongoose');
 const Ecosystem = require('../models/Ecosystem')
-const Region = require('../../agents/world/factories/regionsFactory')
+const regionFactory = require('../../agents/world/factories/regionsFactory')
 const World = require('../models/World')
 
 
@@ -40,7 +40,9 @@ mongoose.connect('mongodb://127.0.0.1:27017/dragons')
             }
         ]
         let ecoResult = await Ecosystem.insertMany(ecosystems);
-        await Region.create(worldResult._id, [0,0]);
+        let regionResults = await regionFactory.create(worldResult._id, [0,0]);
+
+        await regionFactory.describe(regionResults._id);
 
         process.exit();
     }
