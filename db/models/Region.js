@@ -23,7 +23,8 @@ const Region = new Schema(
             default: false
         },
         description: String,
-        short: String
+        short: String,
+        settlements: Array
 }
 );
 Region.index({

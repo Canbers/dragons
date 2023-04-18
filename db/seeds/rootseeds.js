@@ -2,6 +2,7 @@ require('dotenv').config()
 const mongoose = require('mongoose');
 const Ecosystem = require('../models/Ecosystem');
 const regionFactory = require('../../agents/world/factories/regionsFactory');
+const storyTeller = require('../../agents/world/storyTeller.js');
 const World = require('../models/World');
 const vectorService = require('../../services/vectorService')
 
@@ -47,8 +48,9 @@ mongoose.connect('mongodb://127.0.0.1:27017/dragons')
         for(let i = 0; i < surroundingRegions.length; i++) {
             await regionFactory.create(worldResult._id, surroundingRegions[i]);
         }
-
         await regionFactory.describe(originRegion._id);
+
+        await storyTeller.storyOptions(originRegion._id);
 
         process.exit();
     }

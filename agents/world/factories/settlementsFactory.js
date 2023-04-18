@@ -11,6 +11,7 @@ const create = (region, count = 1) => {
 
         for (let i = 0; i < count; i++) {
             settlements.push({
+                id: uuid(),
                 name: uuid(),
                 region: region._id,
                 size: getRandomSize(),
@@ -57,7 +58,8 @@ const getRandomInt = (min, max) => {
 const nameAndDescription = (settlement_id) => {
     return new Promise(async (resolve, reject) => {
         let settlement = await Settlement.findOne({ _id: settlement_id }).populate({ path: 'region', populate: { path: 'world' } }).exec();
-        let promptResult = await gpt.prompt('gpt-3.5-turbo', `We are creating a story about ${settlement.region.world.name}: ${settlement.region.world.description}. Please create a setting for a part of the story which will take place in the ${settlement.region.name} region. Include the name of the city where the story can take place and the name cannot be ${settlement.region.name}. Also include details about the inhabitants of the city and what kind of political and cultural influences we can expect there. Please format it in JSON as follow: { "name": "<The name of the city>", "description": "<The long, two paragraph description of the setting>", "short": "<A short, two sentance summary of the description>" }`);
+        console.log("prompting GPT for Settlement description...")
+        let promptResult = await gpt.prompt('gpt-3.5-turbo', `You are managing a D&D style game in the world of ${settlement.region.world.name}: ${settlement.region.world.description}. Please create a setting for a part of the story which will take place in a ${settlement.size} settlement within the ${settlement.region.name} region. Include the name of the city where the story can take place and the name cannot be ${settlement.region.name}. Also include details about the inhabitants of the city and what kind of political and cultural influences we can expect there. Please format it in JSON as follow: { "name": "<The name of the city>", "description": "<The long, two paragraph description of the setting>", "short": "<A short, two sentance summary of the description>" }`);
         resolve(promptResult);
     });
 }
@@ -74,14 +76,15 @@ const describe = (settlements) => {
         do {
             try {
                 let details = await nameAndDescription(settlements[count]);
+                console.log('parsing settlement details...');
                 let p = JSON.parse(details.content);
-                let icon = await gpt.createImage({
-                    prompt: `A pencil sketched arial view of the following settlement: ${p.short}`,
-                    n: 1,
-                    size: "256x256",
-                });
+                // let icon = await gpt.createImage({
+                //     prompt: `An RPG videogame style map of the following settlement: ${p.short}`,
+                //     n: 1,
+                //     size: "1024x1024",
+                // });
                 await Settlement.findByIdAndUpdate(settlements[count], {
-                    image: icon.data[0].url,
+                //  image: icon.data[0].url,
                     described: true,
                     ...p
                 });
