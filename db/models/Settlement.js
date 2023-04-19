@@ -8,7 +8,10 @@ const Settlement = new Schema(
             type: String,
             required: true,
         },
-        region: ObjectId,
+        region: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'Region'
+        },
         coordinates: {
             type: [Number],
             required: true,
@@ -23,7 +26,9 @@ const Settlement = new Schema(
             type: Boolean,
             default: false
         },
-        description: String
+        description: String,
+        short: String,
+        image: String
     }
 );
 Settlement.index({

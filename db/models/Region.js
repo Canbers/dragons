@@ -9,16 +9,22 @@ const Region = new Schema(
             type: [Number],
             required: true,
         },
-        ecosystem: ObjectId,
+        ecosystem: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'Ecosystem'
+        },
         world: {
-            type: ObjectId,
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'World',
             required: true
         },
         described: {
             type: Boolean,
             default: false
         },
-        description: String
+        description: String,
+        short: String,
+        settlements: Array
 }
 );
 Region.index({
