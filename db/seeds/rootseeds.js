@@ -3,7 +3,9 @@ const mongoose = require('mongoose');
 const Ecosystem = require('../models/Ecosystem');
 const regionFactory = require('../../agents/world/factories/regionsFactory');
 const storyTeller = require('../../agents/world/storyTeller.js');
+const noteTaker = require('../../agents/world/noteTaker.js');
 const World = require('../models/World');
+const Plot = require('../models/Plot');
 const vectorService = require('../../services/vectorService')
 
 
@@ -50,7 +52,17 @@ mongoose.connect('mongodb://127.0.0.1:27017/dragons')
         }
         await regionFactory.describe(originRegion._id);
 
-        await storyTeller.storyOptions(originRegion._id);
+        let plotId = await Plot.create({
+            world: worldResult._id
+        });
+        console.log(`Created plot ${plotId}`);
+        
+        // Generate 3 possible quests
+        let quests = await storyTeller.storyOptions(originRegion._id);
+        // Select one of 3 quests
+        let quest = await noteTaker.questPicker(quests, originRegion);
+        // Add quest to plot
+        await noteTaker.questToPlot(quest, plotId);
 
         process.exit();
     }

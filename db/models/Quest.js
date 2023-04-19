@@ -20,6 +20,11 @@ const Quest = new Schema(
         },
         currentObjective: {
             type: String
+        },
+        status: {
+            type: String,
+            enum: ['Not started', 'In progress', 'Completed'],
+            default: 'Not started',
         }
     }
 );

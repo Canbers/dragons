@@ -23,10 +23,10 @@ const storyOptions = (region_id) => {
         let startingSettlement = region.settlements[pickedSettlement];
         // Access the name and description string from the randomly selected settlement object
         let settlementName = startingSettlement.name;
+        console.log(`Starting in the settlement: ${settlementName}`);
         let settlementDescription = startingSettlement.description;
-
-        let promptResult = await gpt.prompt('gpt-3.5-turbo', `You are a Dungeons and Dragons game master. The players are starting a new game in ${region.world.name}: ${region.world.description}. Please generate three possible initial quests that start in the settlement ${settlementName}: ${settlementDescription}. Please format it in a JSON array with each JSON object structured as follow: { "questTitle": "<Title of quest>", "description": "<The 3 to 5 sentence description of the quest>", "firstObjective": "<The first objective of the quest>"}`);
-
+        console.log('Prompting GPT for 3 quests...');
+        let promptResult = await gpt.prompt('gpt-3.5-turbo', `You are a Dungeons and Dragons game master. The players are starting a new game in ${region.world.name}: ${region.world.description}. Please generate three possible initial quests that could only happen in the settlement ${settlementName}: ${settlementDescription}. Please format it in a JSON array with each JSON object structured as follow: { "questTitle": "<Title of quest>", "description": "<The 3 to 5 sentence description of the quest>", "firstObjective": "<The first objective of the quest>"}`);
         try {
             // Parse the JSON string outside the loop
             let quests = JSON.parse(promptResult.content);
@@ -39,17 +39,4 @@ const storyOptions = (region_id) => {
 };
 
 
-
-            // for (let i = 0; i < 3; i++)
-            //     // Get the firstObjective property from the parsed p object
-            //     let firstObjective = quests[i].firstObjective;
-
-            //     await Quest.create({
-            //         world: region.world._id,
-            //         objectives: [firstObjective],
-            //         currentObjective: firstObjective,
-            //         ...quests[i]
-            //     });
-
-
-module.exports = { storyOptions };
+module.exports = { storyOptions};

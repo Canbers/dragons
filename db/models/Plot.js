@@ -12,9 +12,20 @@ const Plot = new Schema(
         current_state: {
             type: String,
         },
-        quests: {
-            type: Array
-        },
+        quests: [
+            {
+                quest: {
+                    type: mongoose.Schema.Types.ObjectId,
+                    ref: 'Quest',
+                },
+                questTitle: {
+                    type: String,
+                },
+                questStatus: {
+                    type: String
+                }
+            },
+        ],
         milestones: {
             type: Array
         }
