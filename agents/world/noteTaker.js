@@ -8,7 +8,7 @@ const gpt = require('../../services/gptService');
 const {uuid} = require('uuidv4');
 
 
-// temporary function that will automatically pick a quest
+/* temporary function that will automatically pick a quest ---DISABLED
 // WILL NEED TO BE REMOVED once frontend quest select inteface is implemented
 // Should be able to salvage the save selected quest to database logic from this function
 const questPicker = (quests, region) => {
@@ -33,29 +33,66 @@ const questPicker = (quests, region) => {
         }
     })
 }
+*/
 
-// function to add quests to Plot collection
-const questToPlot = (quest, plotId) => {
-    return new Promise(async (resolve, reject) => {
-        try {
-            // Update the plot by adding the quest ID to the quests array
-            const updatedPlot = await Plot.findByIdAndUpdate(
-                plotId,
-                { $push: { 
-                    quests: {
-                        quest: quest._id,
-                        questTitle: quest.questTitle,
-                        questStatus: quest.status
-                        } 
-                    }
-                }
-            );
-
-            resolve(updatedPlot);
-        } catch (e) {
-            reject(e);
+// Function to save one or multiple quests to the Quest collection
+const saveQuests = async (quests, region) => {
+    try {
+        // Check if quests is wrapped in an object with a 'quests' property
+        if (quests.quests && Array.isArray(quests.quests)) {
+            quests = quests.quests;
+        } else if (!Array.isArray(quests)) {
+            quests = [quests]; // Convert single quest to an array if it's not an array
         }
-    });
+        
+        const questsToSave = quests.map(quest => ({
+            insertOne: {
+                document: {
+                    world: region.world._id,
+                    questTitle: quest.questTitle, // Ensure quest title is included
+                    description: quest.description, // Ensure description is included
+                    objectives: [quest.firstObjective], // Wrap firstObjective in an array
+                    currentObjective: quest.firstObjective, // Set the first objective as the current objective
+                    status: 'Not started' // Set default status
+                }
+            }
+        }));
+
+        const result = await Quest.bulkWrite(questsToSave);
+        const savedQuests = quests.map((quest, index) => ({
+            _id: result.insertedIds[index], // Get the _id from the result of bulkWrite
+            questTitle: quest.questTitle,
+            status: 'Not started'
+        }));
+
+        console.log("Saved Quests to be returned:", savedQuests);
+        return savedQuests;
+    } catch (e) {
+        throw new Error('Failed to save quests: ' + e.message);
+    }
 };
 
-module.exports = { questPicker, questToPlot };
+// Function to add one or more quests to the Plot collection
+const questsToPlot = async (quests, plotId) => {
+    try {
+        // Ensure quests is an array
+        if (!Array.isArray(quests)) {
+            throw new Error('Invalid quests input: Expected an array of quests');
+        }
+
+        const updatedPlot = await Plot.findByIdAndUpdate(
+            plotId,
+            { $push: { quests: { $each: quests.map(quest => ({
+                quest: quest._id,
+                questTitle: quest.questTitle,
+                questStatus: quest.status
+            })) } } },
+            { new: true }
+        );
+        return updatedPlot;
+    } catch (e) {
+        throw new Error('Failed to add quests to plot: ' + e.message);
+    }
+};
+
+module.exports = { saveQuests, questsToPlot };
