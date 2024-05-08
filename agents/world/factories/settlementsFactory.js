@@ -11,7 +11,6 @@ const create = (region, count = 1) => {
 
         for (let i = 0; i < count; i++) {
             settlements.push({
-                id: uuid(),
                 name: uuid(),
                 region: region._id,
                 size: getRandomSize(),

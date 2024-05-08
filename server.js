@@ -87,3 +87,15 @@ app.post('/api/input', async (req, res) => {
         res.status(500).send(error.message);
     }
 });
+
+app.put('/api/plots/:plotId', async (req, res) => {
+    const { plotId } = req.params;
+    const { activeQuest } = req.body;
+    try {
+      await Plot.updateOne({ _id: plotId }, { activeQuest });
+      res.sendStatus(200);
+    } catch (error) {
+      console.error(error);
+      res.sendStatus(500);
+    }
+  });

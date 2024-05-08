@@ -26,6 +26,10 @@ const Plot = new Schema(
                 }
             },
         ],
+        activeQuest: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'Quest'
+        },
         milestones: {
             type: Array
         }

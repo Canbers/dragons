@@ -28,11 +28,4 @@ const Quest = new Schema(
         }
     }
 );
-Quest.index({
-    world: 1
-},
-{
-    unique: true
-}
-)
 module.exports = mongoose.model('Quest', Quest);

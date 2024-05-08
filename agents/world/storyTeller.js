@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const World = require('../../db/models/World');
 const Ecosystem = require('../../db/models/Ecosystem');
 const Region = require('../../db/models/Region');
 const Settlement = require('../../db/models/Settlement');
@@ -10,17 +11,34 @@ const {uuid} = require('uuidv4');
 
 const storyOptions = (region_id) => {
     return new Promise(async (resolve, reject) => {
-        let region = await Region.findOne({ _id: region_id })
-            .populate({ path: 'world' })
-            .populate({ path: 'settlements' })
-            .exec();
+        try {
+            // Find the region with the given region_id
+            let region = await Region.findOne({ _id: region_id });
+            if (!region) {
+                reject(new Error('Region not found.'));
+                return;
+            }
+            // Fetch the world for this region
+            let world = await World.findOne({ _id: region.world })
+            .populate('name');
+            if (!world) {
+                reject(new Error('No world found for the region.'));
+                return;
+            }
+            // Fetch all settlements for the region
+            let settlements = await Settlement.find({ _id: { $in: region.settlements } })
+            .populate(['name', 'description']);
+            if (settlements.length === 0) {
+                reject(new Error('No settlements found for the region.'));
+                return;
+            }
 
         // Get the length of the settlements array
         let settlementsLength = region.settlements.length;
 
         // Select a random starting settlement in the Region
         let pickedSettlement = Math.floor(Math.random() * settlementsLength);
-        let startingSettlement = region.settlements[pickedSettlement];
+        let startingSettlement = settlements[pickedSettlement];
         // Access the name and description string from the randomly selected settlement object
         let settlementName = startingSettlement.name;
         console.log(`Starting in the settlement: ${settlementName}`);
@@ -35,7 +53,10 @@ const storyOptions = (region_id) => {
         } catch (e) {
             reject(e);
         }
-    });
+    } catch (error) {
+        reject(error);
+    }
+});
 };
 
 

@@ -127,6 +127,7 @@ async function displayGameInfo(plot) {
                 <td>${details.questTitle}</td>
                 <td>${details.quest.description}</td>
                 <td>${details.quest.status}</td>
+                <td><button class="select-quest-btn" data-quest-id="${quest._id}">Select</button></td>
             </tr>`;
       }
     }
@@ -137,6 +138,13 @@ async function displayGameInfo(plot) {
   htmlContent += `</tbody></table>`;
   questsTableContainer.innerHTML = htmlContent;
 
+    // Add event listeners to the select quest buttons
+    document.querySelectorAll('.select-quest-btn').forEach(btn => {
+      btn.addEventListener('click', (event) => {
+        const questId = event.target.getAttribute('data-quest-id');
+        setActiveQuest(questId);
+      });
+    });
   // Setup modal
   const modal = document.getElementById('quests-modal');
   const btn = document.getElementById('view-quests-btn');
@@ -154,5 +162,20 @@ async function displayGameInfo(plot) {
     if (event.target == modal) {
       modal.style.display = 'none';
     }
+  }
+}
+async function setActiveQuest(questId) {
+  const plotId = 'your-plot-id'; // Replace this with the actual plot ID
+  const response = await fetch(`/api/plots/${plotId}`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ activeQuest: questId }),
+  });
+  if (response.ok) {
+    console.log(`Quest ${questId} selected`);
+  } else {
+    console.error('Failed to set active quest');
   }
 }
