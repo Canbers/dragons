@@ -159,12 +159,11 @@
   }
   
   .modal-content {
-    background-color: #fefefe;
-    margin: 15% auto; /* 15% from the top and centered */
     padding: 20px;
-    border: 1px solid #888;
-    width: 80%; /* Could be more or less, depending on screen size */
-  }
+    border-radius: 10px;
+    background-color: #f9f9f9;
+    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+}
   
   .close {
     color: #aaa;
@@ -179,3 +178,39 @@
     text-decoration: none;
     cursor: pointer;
   }
+
+  /* Style for the table */
+#quests-table-container table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 20px;
+}
+
+/* Style for the table headers */
+#quests-table-container th, #quests-table-container td {
+  border: 1px solid #ddd;
+  padding: 12px;
+  text-align: left;
+}
+
+/* Add background color to the table rows */
+#quests-table-container tr:nth-child(even) {
+  background-color: #f2f2f2;
+}
+
+/* Style for the table header */
+#quests-table-container th {
+  background-color: #4CAF50;
+  color: white;
+}
+
+/* Style for the quest title and description */
+.quest-title {
+  font-weight: bold;
+  margin-bottom: 5px;
+}
+
+.quest-description {
+  font-size: 0.9em;
+  color: #555;
+}

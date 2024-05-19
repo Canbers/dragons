@@ -23,8 +23,13 @@ const Quest = new Schema(
         },
         status: {
             type: String,
-            enum: ['Not started', 'In progress', 'Completed'],
+            enum: ['Not started', 'Active - In progress', 'Not Active - In progress', 'Completed'],
             default: 'Not started',
+        },
+        originSettlement: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'Settlement',
+            required: true
         }
     }
 );

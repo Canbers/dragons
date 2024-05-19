@@ -12,18 +12,24 @@
         <!-- Character Sheet Section -->
         <div id="character-sheet">
             <h2>Character Sheet</h2>
-            <!-- Placeholder content -->
-            <p>Character Name: John Doe</p>
-            <p>Stats: Strength 10, Intelligence 14, Wisdom 12</p>
+            <!-- Character Selection Section -->
+            <div id="character-selection">
+                <div id="character-select-existing">
+                    <input type="text" id="character-id-input" placeholder="Enter Character ID">
+                    <button id="fetch-character-btn">Fetch Character</button>
+                </div>
+                <div id="character-create-new">
+                    <button id="create-character-btn">Create New Character</button>
+                </div>
+            </div>
+            <!-- Character details will be populated here -->
+            <div id="character-details" style="display: none;"></div>
         </div>
     
         <!-- Chat Section -->
         <div id="chat-section">
             <h2>Game Log</h2>
-            <!-- Game log -->
             <div id="game-log"></div>
-        
-        <!-- Chat input box and submit button -->
             <input id="chat-box" type="text" placeholder="Type your message...">
             <button id="submit-btn">Submit</button>
         </div>
@@ -35,22 +41,19 @@
                 <h2>Game Info</h2>
                 <p>Game information will be displayed here.</p>
                 <button id="start-game-btn">Start Game</button>
-
-                <!-- Button to open modal -->
                 <button id="view-quests-btn">View Quests</button>
 
                 <!-- Modal Structure -->
                 <div id="quests-modal" class="modal">
-                <div class="modal-content">
-                    <span class="close">&times;</span>
-                    <h3>Quests</h3>
-                    <div id="quests-table-container">
-                    <!-- Quests table will be populated here -->
+                    <div class="modal-content">
+                        <span class="close">&times;</span>
+                        <h3>Quests</h3>
+                        <div id="quests-table-container">
+                        <!-- Quests table will be populated here -->
+                        </div>
                     </div>
                 </div>
-                </div>
             </div>
-  
             
             <!-- Map Section -->
             <div id="map-section">
@@ -59,9 +62,8 @@
             </div>
         </div>
     </div>
-    
-    
-
     <script src="/app.js" type="module"></script>
 </body>
 </html>
+
+

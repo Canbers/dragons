@@ -24,7 +24,18 @@ const Region = new Schema(
         },
         description: String,
         short: String,
-        settlements: Array
+        settlements: Array,
+        quests: [
+            {
+                quest: {
+                    type: mongoose.Schema.Types.ObjectId,
+                    ref: 'Quest',
+                },
+                questTitle: {
+                    type: String,
+                }
+            },
+        ]
 }
 );
 Region.index({

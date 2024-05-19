@@ -22,6 +22,17 @@ const Settlement = new Schema(
             default: 'small',
             required: true
         },
+        quests: [
+            {
+                quest: {
+                    type: mongoose.Schema.Types.ObjectId,
+                    ref: 'Quest',
+                },
+                questTitle: {
+                    type: String,
+                }
+            },
+        ],
         described: {
             type: Boolean,
             default: false

@@ -58,11 +58,7 @@ mongoose.connect('mongodb://127.0.0.1:27017/dragons')
         console.log(`Created plot ${plotId}`);
         
         // Generate 3 possible quests
-        let quests = await storyTeller.storyOptions(originRegion._id);
-        // Select one of 3 quests
-        let quest = await noteTaker.saveQuests(quests, originRegion);
-        // Add quest to plot
-        await noteTaker.questsToPlot(quest, plotId);
+        let quests = await storyTeller.storyOptions(originRegion._id, plotId);
 
         process.exit();
     }

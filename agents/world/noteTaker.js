@@ -36,7 +36,7 @@ const questPicker = (quests, region) => {
 */
 
 // Function to save one or multiple quests to the Quest collection
-const saveQuests = async (quests, region) => {
+const saveQuests = async (quests, region, originSettlement, plotId) => {
     try {
         // Check if quests is wrapped in an object with a 'quests' property
         if (quests.quests && Array.isArray(quests.quests)) {
@@ -53,6 +53,7 @@ const saveQuests = async (quests, region) => {
                     description: quest.description, // Ensure description is included
                     objectives: [quest.firstObjective], // Wrap firstObjective in an array
                     currentObjective: quest.firstObjective, // Set the first objective as the current objective
+                    originSettlement: originSettlement,
                     status: 'Not started' // Set default status
                 }
             }
@@ -64,6 +65,24 @@ const saveQuests = async (quests, region) => {
             questTitle: quest.questTitle,
             status: 'Not started'
         }));
+
+        // Ensure savedQuests is an array
+        if (!Array.isArray(savedQuests)) {
+            throw new Error('Failed to construct savedQuests array');
+        }
+
+        // Update Region and Settlement models to store reference to quests
+        const regionUpdate = {
+            $push: { quests: { $each: savedQuests.map(quest => ({ quest: quest._id, questTitle: quest.questTitle })) } }
+        };
+        await Region.findByIdAndUpdate(region._id, regionUpdate);
+
+        const settlementUpdate = {
+            $push: { quests: { $each: savedQuests.map(quest => ({ quest: quest._id, questTitle: quest.questTitle })) } }
+        };
+        await Settlement.findByIdAndUpdate(originSettlement, settlementUpdate);
+
+        await questsToPlot(savedQuests, plotId); // Pass savedQuests instead of quests
 
         console.log("Saved Quests to be returned:", savedQuests);
         return savedQuests;

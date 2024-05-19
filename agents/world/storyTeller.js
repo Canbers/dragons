@@ -5,11 +5,12 @@ const Region = require('../../db/models/Region');
 const Settlement = require('../../db/models/Settlement');
 const Plot = require('../../db/models/Plot');
 const Quest = require('../../db/models/Quest');
+const noteTaker = require('../world/noteTaker')
 const gpt = require('../../services/gptService');
 const {uuid} = require('uuidv4');
 
 
-const storyOptions = (region_id) => {
+const storyOptions = (region_id, plotId) => {
     return new Promise(async (resolve, reject) => {
         try {
             // Find the region with the given region_id
@@ -48,7 +49,11 @@ const storyOptions = (region_id) => {
         try {
             // Parse the JSON string outside the loop
             let quests = JSON.parse(promptResult.content);
-            console.log(quests)
+            console.log(quests);
+            
+            // Save the quests and pass the starting settlement
+            await noteTaker.saveQuests(quests, region, startingSettlement._id, plotId);
+            
             resolve(quests);
         } catch (e) {
             reject(e);
@@ -59,5 +64,28 @@ const storyOptions = (region_id) => {
 });
 };
 
+// Not used anywhere yet, for future reference when needing to create additional quests during gameplay.
+const createQuestInCurrentSettlement = async (region_id, settlement_id) => {
+    try {
+        // Fetch the region and settlement
+        let region = await Region.findById(region_id);
+        let settlement = await Settlement.findById(settlement_id);
+        
+        if (!region || !settlement) {
+            throw new Error('Region or Settlement not found.');
+        }
 
-module.exports = { storyOptions};
+        // Generate quests (this is just an example, adjust as needed)
+        let promptResult = await gpt.prompt('gpt-3.5-turbo', `Generate a quest for the settlement ${settlement.name} in the region ${region.name}.`);
+        let quests = JSON.parse(promptResult.content);
+
+        // Save the quests
+        await noteTaker.saveQuests(quests, region, settlement._id);
+        
+        return quests;
+    } catch (error) {
+        throw new Error('Failed to create quest: ' + error.message);
+    }
+};
+
+module.exports = { storyOptions, createQuestInCurrentSettlement};

@@ -1,17 +1,23 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>GPT & Dragons</title>
-  <link rel="stylesheet" href="styles.css"> 
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="D&D Style Adventure Game - Landing">
+    <link rel="stylesheet" href="styles.css">
+    <title>Adventure Game - Landing</title>
 </head>
 <body>
-  <div class="container">
-    <h1>GPT & Dragons</h1>
-    <button id="start-new-game">Start New Game</button>
-    <button id="join-existing-game">Join Existing Game</button>
-  </div>
-  <script src="app.js"></script> <!-- Add a reference to your app.js file -->
+    <div id="landing-container">
+        <h2>Welcome to the Adventure Game</h2>
+        <div id="world-selection">
+            <h3>Select a World</h3>
+            <select id="world-list">
+                <!-- Worlds will be dynamically populated here -->
+            </select>
+            <button id="select-world-btn">Select World</button>
+        </div>
+    </div>
+    <script src="/landing.js" type="module"></script>
 </body>
 </html>
