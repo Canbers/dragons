@@ -1,13 +1,19 @@
 const express = require('express');
 const path = require('path');
+const fs = require('fs');
+const https = require('https');
+const mongoose = require('mongoose');
+const { auth, requiresAuth } = require('express-openid-connect');
+require('dotenv').config();
+
 const app = express();
+const cors = require('cors');
 const Plot = require('./db/models/Plot.js');
 const Quest = require('./db/models/Quest.js');
 const Character = require('./db/models/character.js');
 const Settlement = require('./db/models/Settlement.js');
 const World = require('./db/models/World.js');
 const actionInterpreter = require('./agents/actionInterpreter');
-const mongoose = require('mongoose');
 
 mongoose.connect('mongodb://localhost:27017/dragons', {
     useNewUrlParser: true,
@@ -18,8 +24,106 @@ mongoose.connect('mongodb://localhost:27017/dragons', {
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Set up CORS to allow requests from your local development environment
+const corsOptions = {
+    origin: 'https://localhost:3000',
+    optionsSuccessStatus: 200,
+    credentials: true
+};
+
+app.use(cors(corsOptions));
+
+// Auth0 configuration
+const config = {
+    authRequired: false,
+    auth0Logout: true,
+    secret: process.env.AUTH0_SECRET,
+    baseURL: process.env.AUTH0_BASE_URL,
+    clientID: process.env.AUTH0_CLIENT_ID,
+    issuerBaseURL: process.env.AUTH0_ISSUER_BASE_URL,
+    authorizationParams: {
+        scope: 'openid profile email' // Ensure correct scopes
+    }
+};
+
+// Attach Auth0 to the Express application
+app.use(auth(config));
+
+// Login route
+app.get('/login', (req, res) => {
+    res.oidc.login({ returnTo: '/profile' });
+});
+
+// Logout route
+app.get('/logout', (req, res) => {
+    res.oidc.logout({ returnTo: '/landing' });
+});
+
+// Authorize route
+app.get('/authorize', (req, res) => {
+    res.oidc.login({
+        authorizationParams: {
+            prompt: 'none',
+            redirect_uri: `${process.env.AUTH0_BASE_URL}/callback`
+        },
+        returnTo: '/profile'
+    });
+});
+
+// Authentication status check endpoint
+app.get('/auth/status', (req, res) => {
+    if (req.oidc.isAuthenticated()) { 
+        res.json({
+            authenticated: true,
+            name: req.oidc.user.name,
+            email: req.oidc.user.email
+        });
+    } else {
+        res.json({ authenticated: false });
+    }
+});
+
+// Middleware to check if the user is authenticated and has selected a world
+function checkWorldSelection(req, res, next) {
+    if (!req.oidc.isAuthenticated()) {
+        return res.redirect('/');
+    }
+    if (!req.query.worldId) {
+        return res.redirect('/profile');
+    }
+    next();
+}
+
+// Middleware to check if the user is authenticated and redirect if not
+function ensureAuthenticated(req, res, next) {
+    if (!req.oidc.isAuthenticated()) {
+        return res.redirect('/landing.html');
+    }
+    next();
+}
+
+// Default route
+app.get('/', (req, res) => {
+    res.redirect('/landing.html');
+});
+
+// Serve landing page
+app.get('/landing.html', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'landing.html'));
+});
+
+// Serve profile.html with authentication check
+app.get('/profile', ensureAuthenticated, (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'profile.html'));
+});
+
+// Serve index.html with world selection and authentication check
+app.get('/index.html', ensureAuthenticated, checkWorldSelection, (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
 // Fetch all worlds
-app.get('/api/worlds', async (req, res) => {
+app.get('/api/worlds', ensureAuthenticated, async (req, res) => {
     try {
         const worlds = await World.find({});
         res.json(worlds);
@@ -29,7 +133,7 @@ app.get('/api/worlds', async (req, res) => {
 });
 
 // Fetch characters by world ID
-app.get('/api/characters', async (req, res) => {
+app.get('/api/characters', ensureAuthenticated, async (req, res) => {
     try {
         const { worldId } = req.query;
         if (!mongoose.Types.ObjectId.isValid(worldId)) {
@@ -43,7 +147,7 @@ app.get('/api/characters', async (req, res) => {
 });
 
 // Fetch Game Info
-app.get('/api/game-info', async (req, res) => {
+app.get('/api/game-info', ensureAuthenticated, async (req, res) => {
     try {
         const worldId = req.query.worldId;
         if (!mongoose.Types.ObjectId.isValid(worldId)) {
@@ -63,7 +167,7 @@ app.get('/api/game-info', async (req, res) => {
 });
 
 // Fetch Quest Details
-app.get('/api/quest-details', async (req, res) => {
+app.get('/api/quest-details', ensureAuthenticated, async (req, res) => {
     try {
         const questId = req.query.questId;
         if (!mongoose.Types.ObjectId.isValid(questId)) {
@@ -84,7 +188,7 @@ app.get('/api/quest-details', async (req, res) => {
 });
 
 // Interpret User Input
-app.post('/api/input', async (req, res) => {
+app.post('/api/input', ensureAuthenticated, async (req, res) => {
     try {
         const { input } = req.body;
         const response = await actionInterpreter.interpret(input);
@@ -95,7 +199,7 @@ app.post('/api/input', async (req, res) => {
 });
 
 // Create or fetch plot for a given world
-app.post('/api/plot', async (req, res) => {
+app.post('/api/plot', ensureAuthenticated, async (req, res) => {
     try {
         const { worldId } = req.body;
         if (!mongoose.Types.ObjectId.isValid(worldId)) {
@@ -116,7 +220,7 @@ app.post('/api/plot', async (req, res) => {
 });
 
 // Update Active Quest in Plot
-app.put('/api/plots/:plotId', async (req, res) => {
+app.put('/api/plots/:plotId', ensureAuthenticated, async (req, res) => {
     const { plotId } = req.params;
     const { activeQuest } = req.body;
     try {
@@ -139,7 +243,7 @@ app.put('/api/plots/:plotId', async (req, res) => {
 });
 
 // Create a new character
-app.post('/api/characters', async (req, res) => {
+app.post('/api/characters', ensureAuthenticated, async (req, res) => {
     try {
         const character = new Character(req.body);
         await character.save();
@@ -150,7 +254,7 @@ app.post('/api/characters', async (req, res) => {
 });
 
 // Get a character by ID
-app.get('/api/characters/:id', async (req, res) => {
+app.get('/api/characters/:id', ensureAuthenticated, async (req, res) => {
     try {
         const character = await Character.findById(req.params.id).populate('currentStatus.location').populate('originLocation');
         if (!character) {
@@ -163,7 +267,7 @@ app.get('/api/characters/:id', async (req, res) => {
 });
 
 // Update a character
-app.put('/api/characters/:id', async (req, res) => {
+app.put('/api/characters/:id', ensureAuthenticated, async (req, res) => {
     try {
         const character = await Character.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true });
         if (!character) {
@@ -176,7 +280,7 @@ app.put('/api/characters/:id', async (req, res) => {
 });
 
 // Delete a character
-app.delete('/api/characters/:id', async (req, res) => {
+app.delete('/api/characters/:id', ensureAuthenticated, async (req, res) => {
     try {
         const character = await Character.findByIdAndDelete(req.params.id);
         if (!character) {
@@ -189,7 +293,7 @@ app.delete('/api/characters/:id', async (req, res) => {
 });
 
 // Assign character to plot and fetch plot details
-app.post('/api/assign-character', async (req, res) => {
+app.post('/api/assign-character', ensureAuthenticated, async (req, res) => {
     try {
         const { characterId, plotId } = req.body;
         if (!mongoose.Types.ObjectId.isValid(characterId) || !mongoose.Types.ObjectId.isValid(plotId)) {
@@ -214,7 +318,12 @@ app.post('/api/assign-character', async (req, res) => {
     }
 });
 
+const httpsOptions = {
+    key: fs.readFileSync('localhost-key.pem'),
+    cert: fs.readFileSync('localhost.pem')
+};
+
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`Server is running on http://localhost:${PORT}`);
+https.createServer(httpsOptions, app).listen(PORT, () => {
+    console.log(`Server is running on https://localhost:${PORT}`);
 });

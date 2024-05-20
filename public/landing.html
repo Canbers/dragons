@@ -3,21 +3,35 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="D&D Style Adventure Game - Landing">
+    <meta name="description" content="D&D Style Adventure Game - Login">
     <link rel="stylesheet" href="styles.css">
-    <title>Adventure Game - Landing</title>
+    <title>Adventure Game - Login</title>
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap&family=MedievalSharp&display=swap" rel="stylesheet">
 </head>
 <body>
-    <div id="landing-container">
-        <h2>Welcome to the Adventure Game</h2>
-        <div id="world-selection">
-            <h3>Select a World</h3>
-            <select id="world-list">
-                <!-- Worlds will be dynamically populated here -->
-            </select>
-            <button id="select-world-btn">Select World</button>
+<!-- Auth container -->
+<div id="auth-container" class="auth-container">
+    <button id="login-btn" class="auth-button">Login</button>
+    <div id="user-menu" class="user-menu" style="display: none;">
+        <button id="user-menu-button">
+            <span id="username">Username</span> <i class="arrow down"></i>
+        </button>
+        <div id="user-dropdown" class="dropdown-content" style="display: none;">
+            <button id="profile-btn">View Profile</button>
+            <button id="logout-btn">Logout</button>
         </div>
     </div>
-    <script src="/landing.js" type="module"></script>
+</div>
+<!-- Main content -->
+<div id="landing-container" class="landing-container">
+    <h2>A true "choose your own adventure"!</h2>
+    <p>Please log in to continue.</p>
+    <div class="info-section">
+        <p>Based on Tabletop RPG elements, this game allows the player to go on any advneture of their choosing. <br> The Game Master is powered by OpenAI's GPT models and will react to whatever the player says and does.</p>
+        <p>The world structure is procedurally generated systematically, but all the descriptions and colouring is done by AI. <br> Everything generated is persisted in the database for that world, so that the AI is grounded and does not hallucinate previous events and details.</p>
+    </div>
+</div>
+<script src="/landing.js" type="module"></script>
 </body>
 </html>

@@ -8,62 +8,75 @@
     <title>Adventure Game</title>
 </head>
 <body>
-    <div id="main-container">
-        <!-- Character Sheet Section -->
-        <div id="character-sheet">
-            <h2>Character Sheet</h2>
-            <!-- Character Selection Section -->
-            <div id="character-selection">
-                <div id="character-select-existing">
-                    <input type="text" id="character-id-input" placeholder="Enter Character ID">
-                    <button id="fetch-character-btn">Fetch Character</button>
-                </div>
-                <div id="character-create-new">
-                    <button id="create-character-btn">Create New Character</button>
-                </div>
-            </div>
-            <!-- Character details will be populated here -->
-            <div id="character-details" style="display: none;"></div>
+<!-- Auth container -->
+<div id="auth-container" class="auth-container">
+    <button id="login-btn" class="auth-button" style="display: none;">Login</button>
+    <div id="user-menu" class="user-menu" style="display: none;">
+        <button id="user-menu-button">
+            <span id="username">Username</span> <i class="arrow down"></i>
+        </button>
+        <div id="user-dropdown" class="dropdown-content" style="display: none;">
+            <button id="profile-btn">View Profile</button>
+            <button id="logout-btn">Logout</button>
         </div>
-    
-        <!-- Chat Section -->
-        <div id="chat-section">
-            <h2>Game Log</h2>
-            <div id="game-log"></div>
-            <input id="chat-box" type="text" placeholder="Type your message...">
-            <button id="submit-btn">Submit</button>
-        </div>
-    
-        <!-- Game Info and Map Section -->
-        <div id="game-info-map-container">
-            <!-- Game Info Section -->
-            <div id="game-info">
-                <h2>Game Info</h2>
-                <p>Game information will be displayed here.</p>
-                <button id="start-game-btn">Start Game</button>
-                <button id="view-quests-btn">View Quests</button>
+    </div>
+</div>
 
-                <!-- Modal Structure -->
-                <div id="quests-modal" class="modal">
-                    <div class="modal-content">
-                        <span class="close">&times;</span>
-                        <h3>Quests</h3>
-                        <div id="quests-table-container">
-                        <!-- Quests table will be populated here -->
-                        </div>
+<div id="main-container">
+    <!-- Character Sheet Section -->
+    <div id="character-sheet">
+        <h2>Character Sheet</h2>
+        <!-- Character Selection Section -->
+        <div id="character-selection">
+            <div id="character-select-existing">
+                <input type="text" id="character-id-input" placeholder="Enter Character ID">
+                <button id="fetch-character-btn">Fetch Character</button>
+            </div>
+            <div id="character-create-new">
+                <button id="create-character-btn">Create New Character</button>
+            </div>
+        </div>
+        <!-- Character details will be populated here -->
+        <div id="character-details" style="display: none;"></div>
+    </div>
+
+    <!-- Chat Section -->
+    <div id="chat-section">
+        <h2>Game Log</h2>
+        <div id="game-log"></div>
+        <input id="chat-box" type="text" placeholder="Type your message...">
+        <button id="submit-btn">Submit</button>
+    </div>
+
+    <!-- Game Info and Map Section -->
+    <div id="game-info-map-container">
+        <!-- Game Info Section -->
+        <div id="game-info">
+            <h2>Game Info</h2>
+            <p>Game information will be displayed here.</p>
+            <button id="start-game-btn">Start Game</button>
+            <button id="view-quests-btn">View Quests</button>
+
+            <!-- Modal Structure -->
+            <div id="quests-modal" class="modal">
+                <div class="modal-content">
+                    <span class="close">&times;</span>
+                    <h3>Quests</h3>
+                    <div id="quests-table-container">
+                    <!-- Quests table will be populated here -->
                     </div>
                 </div>
             </div>
-            
-            <!-- Map Section -->
-            <div id="map-section">
-                <h2>Map</h2>
-                <p>Map content will be displayed here.</p>
-            </div>
+        </div>
+        
+        <!-- Map Section -->
+        <div id="map-section">
+            <h2>Map</h2>
+            <p>Map content will be displayed here.</p>
         </div>
     </div>
-    <script src="/app.js" type="module"></script>
+</div>
+
+<script src="/app.js" type="module"></script>
 </body>
 </html>
-
-

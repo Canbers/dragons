@@ -1,15 +1,24 @@
+import { setupAuthUI } from './auth.js';
 document.addEventListener('DOMContentLoaded', () => {
-    // New code for world and character selection
+    setupAuthUI();
     const urlParams = new URLSearchParams(window.location.search);
     const worldId = urlParams.get('worldId');
 
-    if (worldId) {
-        fetchCharacters(worldId);
-    } else {
-        alert('No world selected, please go back to the landing page.');
-        window.location.href = '/landing.html';
+    if (!worldId) {
+        alert('No world selected, please go back to the profile page to select a world.');
+        window.location.href = '/profile';
+        return;
     }
 
+    const loginBtn = document.getElementById('login-btn');
+    const logoutBtn = document.getElementById('logout-btn');
+    const profileBtn = document.getElementById('profile-btn');
+    const notification = document.getElementById('notification');
+    const userMenuButton = document.getElementById('user-menu-button');
+    const userDropdown = document.getElementById('user-dropdown');
+    const usernameDisplay = document.getElementById('username');
+    const userMenu = document.getElementById('user-menu');
+    const authContainer = document.getElementById('auth-container');
     const characterIdInput = document.getElementById('character-id-input');
     const fetchCharacterBtn = document.getElementById('fetch-character-btn');
     const createCharacterBtn = document.getElementById('create-character-btn');
@@ -17,9 +26,50 @@ document.addEventListener('DOMContentLoaded', () => {
     const characterDetails = document.getElementById('character-details');
     const characterSelection = document.getElementById('character-selection');
 
+
+    // Login action
+    loginBtn.addEventListener('click', () => {
+        window.location.href = '/login';
+    });
+
+    // Logout action
+    logoutBtn.addEventListener('click', () => {
+        window.location.href = '/logout';
+    });
+
+    // View profile action
+    profileBtn.addEventListener('click', async () => {
+        try {
+            const response = await fetch('/profile');
+            const user = await response.json();
+            alert(`User profile:\nName: ${user.name}\nEmail: ${user.email}`);
+        } catch (error) {
+            console.error('Error fetching profile:', error);
+        }
+    });
+
+    // User menu dropdown
+    userMenuButton.addEventListener('click', () => {
+        userDropdown.classList.toggle('show');
+    });
+
+    // Close the dropdown if the user clicks outside of it
+    window.onclick = (event) => {
+        if (!event.target.matches('#user-menu-button') && !event.target.matches('#username') && !event.target.matches('.arrow')) {
+            if (userDropdown.classList.contains('show')) {
+                userDropdown.classList.remove('show');
+            }
+        }
+    };
+
     async function fetchCharacters(worldId) {
         try {
             const response = await fetch(`/api/characters?worldId=${worldId}`);
+            if (response.status === 401) {
+                // Redirect to authorize endpoint
+                window.location.href = '/authorize';
+                return;
+            }
             if (!response.ok) {
                 throw new Error('Failed to fetch characters');
             }
@@ -27,6 +77,24 @@ document.addEventListener('DOMContentLoaded', () => {
             characterList.innerHTML = characters.map(character => `<option value="${character._id}">${character.name}</option>`).join('');
         } catch (error) {
             console.error('Error fetching characters:', error);
+        }
+    }
+
+    async function fetchGameInfo(worldId) {
+        try {
+            const response = await fetch(`/api/game-info?worldId=${worldId}`);
+            if (response.status === 401) {
+                // Redirect to authorize endpoint
+                window.location.href = '/authorize';
+                return;
+            }
+            if (!response.ok) {
+                throw new Error('Failed to fetch game info');
+            }
+            const plot = await response.json();
+            displayGameInfo(plot);
+        } catch (error) {
+            console.error('Error fetching game info:', error);
         }
     }
 
@@ -85,6 +153,11 @@ document.addEventListener('DOMContentLoaded', () => {
     async function fetchCharacter(characterId) {
         try {
             const response = await fetch(`/api/characters/${characterId}`);
+            if (response.status === 401) {
+                // Redirect to authorize endpoint
+                window.location.href = '/authorize';
+                return;
+            }
             if (!response.ok) {
                 throw new Error('Failed to fetch character');
             }
@@ -133,6 +206,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 body: JSON.stringify({ worldId })
             });
 
+            if (response.status === 401) {
+                // Redirect to authorize endpoint
+                window.location.href = '/authorize';
+                return;
+            }
+
             if (!response.ok) {
                 throw new Error('Failed to create or fetch plot');
             }
@@ -155,6 +234,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 body: JSON.stringify({ characterId, plotId })
             });
 
+            if (response.status === 401) {
+                // Redirect to authorize endpoint
+                window.location.href = '/authorize';
+                return;
+            }
+
             if (!response.ok) {
                 throw new Error('Failed to assign character to plot');
             }
@@ -166,64 +251,15 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    async function fetchGameInfo(worldId) {
-        try {
-            const response = await fetch(`/api/game-info?worldId=${worldId}`);
-            if (!response.ok) {
-                throw new Error('Failed to fetch game info');
-            }
-            const plot = await response.json();
-            displayGameInfo(plot);
-        } catch (error) {
-            console.error('Error fetching game info:', error);
-        }
-    }
-
-    async function displayGameInfo(plot) {
-        const questsTableContainer = document.getElementById('quests-table-container');
-        let htmlContent = `
-            <table>
-                <thead>
-                    <tr>
-                        <th>Quest</th>
-                        <th>Description</th>
-                        <th>Status</th>
-                        <th>Action</th>
-                    </tr>
-                </thead>
-                <tbody>`;
-
-        if (Array.isArray(plot.quests)) {
-            for (const quest of plot.quests) {
-                const details = await fetchQuestDetails(quest._id);
-                if (details) {
-                    htmlContent += `
-                        <tr>
-                            <td class="quest-title">${details.questTitle}</td>
-                            <td class="quest-description">${details.quest.description}</td>
-                            <td>${details.quest.status}</td>
-                            <td><button class="select-quest-btn" data-quest-id="${quest._id}">Select</button></td>
-                        </tr>`;
-                }
-            }
-        } else {
-            console.error('plot.quests is not an array');
-        }
-
-        htmlContent += `</tbody></table>`;
-        questsTableContainer.innerHTML = htmlContent;
-
-        document.querySelectorAll('.select-quest-btn').forEach(btn => {
-            btn.addEventListener('click', (event) => {
-                const questId = event.target.getAttribute('data-quest-id');
-                setActiveQuest(plot._id, questId);
-            });
-        });
-    }
-
     async function fetchQuestDetails(questId) {
         try {
             const response = await fetch(`/api/quest-details?questId=${questId}`);
+            if (response.status === 401) {
+                // Redirect to authorize endpoint
+                window.location.href = '/authorize';
+                return;
+            }
+
             if (!response.ok) {
                 throw new Error('Failed to fetch quest details');
             }
@@ -243,6 +279,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 },
                 body: JSON.stringify({ activeQuest: questId }),
             });
+            if (response.status === 401) {
+                // Redirect to authorize endpoint
+                window.location.href = '/authorize';
+                return;
+            }
+
             if (response.ok) {
                 console.log(`Quest ${questId} selected as active`);
                 fetchGameInfo(plotId);
@@ -310,6 +352,12 @@ document.addEventListener('DOMContentLoaded', () => {
                     },
                     body: JSON.stringify({ input: inputText })
                 });
+                if (response.status === 401) {
+                    // Redirect to authorize endpoint
+                    window.location.href = '/authorize';
+                    return;
+                }
+
                 if (!response.ok) {
                     throw new Error(`HTTP error! status: ${response.status}`);
                 }
@@ -329,8 +377,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const timestamp = new Date().toLocaleTimeString();
       
         gameLog.innerHTML += `
-          <div class="message">
-            <div class="author">Player:</div>
+          <div class="message user">
+            <div class="author user">Player:</div>
             <div class="userText">
               ${inputText}
               <span class="timestamp">${timestamp}</span>
@@ -345,7 +393,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const gameLog = document.getElementById('game-log');
         const timestamp = new Date().toLocaleTimeString();
         gameLog.innerHTML += `
-          <div class="message">
+          <div class="message ai">
             <div class="author">AI:</div>
             <div class="systemText">
             ${response.message}

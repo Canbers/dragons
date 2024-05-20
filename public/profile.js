@@ -4,17 +4,21 @@ document.addEventListener('DOMContentLoaded', () => {
     const loginBtn = document.getElementById('login-btn');
     const logoutBtn = document.getElementById('logout-btn');
     const profileBtn = document.getElementById('profile-btn');
-    const notification = document.getElementById('notification');
     const userMenuButton = document.getElementById('user-menu-button');
     const userDropdown = document.getElementById('user-dropdown');
     const usernameDisplay = document.getElementById('username');
     const userMenu = document.getElementById('user-menu');
-    const authContainer = document.getElementById('auth-container');
+    const userDetails = document.getElementById('user-details');
+    const worldList = document.getElementById('world-list');
+    const selectWorldBtn = document.getElementById('select-world-btn');    
 
-    // Login action
-    loginBtn.addEventListener('click', () => {
-        window.location.href = '/login';
-    });
+    // Display user details
+    function displayUserDetails(user) {
+        userDetails.innerHTML = `
+            <p>Name: ${user.name}</p>
+            <p>Email: ${user.email}</p>
+        `;
+    }
 
     // Logout action
     logoutBtn.addEventListener('click', () => {
@@ -46,4 +50,36 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
 
+    // Fetch and display worlds
+    async function fetchWorlds() {
+        try {
+            const response = await fetch('/api/worlds');
+            if (response.status === 401) {
+                // Redirect to authorize endpoint
+                window.location.href = '/authorize';
+                return;
+            }
+            if (!response.ok) {
+                throw new Error('Failed to fetch worlds');
+            }
+            const worlds = await response.json();
+            worldList.innerHTML = worlds.map(world => `<option value="${world._id}">${world.name}</option>`).join('');
+        } catch (error) {
+            console.error('Error fetching worlds:', error);
+        }
+    }
+
+    // Handle world selection
+    selectWorldBtn.addEventListener('click', () => {
+        const selectedWorldId = worldList.value;
+        if (selectedWorldId) {
+            console.log('routing user to game in ${selectedWorldId}')
+            window.location.href = `/index.html?worldId=${selectedWorldId}`;
+        } else {
+            alert('Please select a world');
+        }
+    });
+
+    // Fetch initial world list
+    fetchWorlds();
 });
