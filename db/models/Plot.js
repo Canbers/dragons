@@ -9,6 +9,20 @@ const Plot = new Schema(
             ref: 'World',
             required: true
         },
+        players: [
+            {
+                user: {
+                    type: String,
+                },
+                character: {
+                    type: mongoose.Schema.Types.ObjectId,
+                    ref: 'Character',
+                },
+                name: {
+                    type: String,
+                },
+            },
+        ],
         current_state: {
             type: String,
         },
@@ -35,6 +49,7 @@ const Plot = new Schema(
         }
     }
 );
+
 Plot.index({
     world: 1
 },

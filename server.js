@@ -132,35 +132,23 @@ app.get('/api/worlds', ensureAuthenticated, async (req, res) => {
     }
 });
 
-// Fetch characters by world ID
-app.get('/api/characters', ensureAuthenticated, async (req, res) => {
-    try {
-        const { worldId } = req.query;
-        if (!mongoose.Types.ObjectId.isValid(worldId)) {
-            return res.status(400).send('Invalid worldId format');
-        }
-        const characters = await Character.find({ world: worldId });
-        res.json(characters);
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
 // Fetch Game Info
 app.get('/api/game-info', ensureAuthenticated, async (req, res) => {
     try {
-        const worldId = req.query.worldId;
-        if (!mongoose.Types.ObjectId.isValid(worldId)) {
-            return res.status(400).send('Invalid worldId format');
+        const plotId = req.query.plotId;
+        const characterId = req.query.characterId;
+        if (!mongoose.Types.ObjectId.isValid(plotId) || !mongoose.Types.ObjectId.isValid(characterId)) {
+            return res.status(400).send('Invalid ID format');
         }
-        const plot = await Plot.findOne({ world: new mongoose.Types.ObjectId(worldId) }).populate({
+        const plot = await Plot.findById(plotId).populate({
             path: 'quests',
             model: 'Quest'
         });
-        if (!plot) {
-            return res.status(404).send('Plot not found');
+        const character = await Character.findById(characterId);
+        if (!plot || !character) {
+            return res.status(404).send('Plot or Character not found');
         }
-        res.json(plot);
+        res.json({ plot, character });
     } catch (error) {
         res.status(500).send(error.message);
     }
@@ -205,14 +193,8 @@ app.post('/api/plot', ensureAuthenticated, async (req, res) => {
         if (!mongoose.Types.ObjectId.isValid(worldId)) {
             return res.status(400).send('Invalid worldId format');
         }
-        let plot = await Plot.findOne({ world: worldId }).populate({
-            path: 'quests',
-            model: 'Quest'
-        });
-        if (!plot) {
-            plot = new Plot({ world: worldId, quests: [], milestones: [] });
-            await plot.save();
-        }
+        const plot = new Plot({ world: worldId, quests: [], milestones: [] });
+        await plot.save();
         res.json(plot);
     } catch (error) {
         res.status(500).send(error.message);
@@ -245,11 +227,29 @@ app.put('/api/plots/:plotId', ensureAuthenticated, async (req, res) => {
 // Create a new character
 app.post('/api/characters', ensureAuthenticated, async (req, res) => {
     try {
-        const character = new Character(req.body);
+        const characterData = { ...req.body, user: req.oidc.user.sub }; // Add Auth0 user ID
+        const character = new Character(characterData);
         await character.save();
         res.status(201).json(character);
     } catch (error) {
         res.status(400).json({ error: error.message });
+    }
+});
+
+// Fetch characters for the authenticated user
+app.get('/api/characters', ensureAuthenticated, async (req, res) => {
+    try {
+        const characters = await Character.find({ user: req.oidc.user.sub })
+            .populate({
+                path: 'plot',
+                populate: {
+                    path: 'world',
+                    model: 'World'
+                }
+            });
+        res.json(characters);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
     }
 });
 
@@ -292,26 +292,41 @@ app.delete('/api/characters/:id', ensureAuthenticated, async (req, res) => {
     }
 });
 
-// Assign character to plot and fetch plot details
+// Assign character to plot and update plot with character details
 app.post('/api/assign-character', ensureAuthenticated, async (req, res) => {
     try {
         const { characterId, plotId } = req.body;
         if (!mongoose.Types.ObjectId.isValid(characterId) || !mongoose.Types.ObjectId.isValid(plotId)) {
             return res.status(400).send('Invalid ID format');
         }
+
         const character = await Character.findById(characterId);
         if (!character) {
             return res.status(404).send('Character not found');
         }
+
         const plot = await Plot.findById(plotId).populate({
-            path: 'quests',
-            model: 'Quest'
+            path: 'players.character',
+            model: 'Character'
         });
         if (!plot) {
             return res.status(404).send('Plot not found');
         }
+
+        // Check if the character is already in the plot
+        const isCharacterInPlot = plot.players.some(player => player.character._id.equals(character._id));
+        if (!isCharacterInPlot) {
+            plot.players.push({
+                user: character.user,
+                character: character._id,
+                name: character.name
+            });
+            await plot.save();
+        }
+
         character.plot = plotId;
         await character.save();
+
         res.json(plot);
     } catch (error) {
         res.status(500).send(error.message);

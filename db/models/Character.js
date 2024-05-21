@@ -2,6 +2,10 @@ const mongoose = require('mongoose');
 const Schema = mongoose.Schema;
 
 const Character = new Schema({
+    user: {
+        type: String, // Store Auth0 user ID
+        required: true
+    },
     name: {
         type: String,
         required: true
