@@ -21,6 +21,7 @@
     "jwks-rsa": "^3.1.0",
     "mkcert": "^3.2.0",
     "mongoose": "^7.0.3",
+    "mongosh": "^2.2.6",
     "openai": "^4.47.1",
     "passport": "^0.7.0",
     "passport-local": "^1.0.0",

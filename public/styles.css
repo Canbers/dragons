@@ -262,9 +262,9 @@ button:active {
 }
 
 #chat-section {
-  max-width: 40%;
   display: flex;
   flex-direction: column;
+  height: 100%;
 }
 
 #game-info-map-container {
@@ -285,9 +285,10 @@ button:active {
 }
 
 #game-log {
-  flex: 1;
+  flex-grow: 1;
   overflow-y: auto;
-  margin-bottom: 10px;
+  padding: 10px;
+  border: 1px solid #ccc; 
 }
 
 #chat-box {
@@ -296,6 +297,15 @@ button:active {
   border-radius: 5px;
   border: 1px solid #ccc;
 }
+/* Add styles for the action selector */
+#action-selector {
+  margin-bottom: 10px;
+}
+
+#action-selector label {
+  margin-right: 10px;
+}
+
 /* Game Log Message Styles */
 .message {
   display: flex;
@@ -487,4 +497,27 @@ body, html {
   select, button {
     font-size: 1em;
   }
+}
+
+/* Grid Container for Regions */
+.grid-container {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.grid-item {
+  background-color: rgba(255, 255, 255, 0.8);
+  border: 1px solid #ccc;
+  border-radius: 5px;
+  padding: 10px;
+  text-align: center;
+  font-family: 'MedievalSharp', cursive;
+  color: #333;
+}
+
+.grid-item.empty {
+  background-color: transparent;
+  border: none;
 }

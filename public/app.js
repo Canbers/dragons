@@ -1,4 +1,6 @@
 import { setupAuthUI } from './auth.js';
+let plotId = null;
+let isLoadingOlderLogs = false;
 document.addEventListener('DOMContentLoaded', () => {
     setupAuthUI();
     const urlParams = new URLSearchParams(window.location.search);
@@ -55,6 +57,87 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
 
+    async function fetchWorldDetails(worldId) {
+        try {
+            const response = await fetch(`/api/worlds/${worldId}`);
+            if (response.status === 401) {
+                window.location.href = '/authorize';
+                return;
+            }
+            if (!response.ok) {
+                throw new Error('Failed to fetch world details');
+            }
+            const world = await response.json();
+            displayWorldDetails(world);
+        } catch (error) {
+            console.error('Error fetching world details:', error);
+        }
+    }
+
+    function displayWorldDetails(world) {
+        document.getElementById('map-section').innerHTML = `
+            <h2>Map</h2>
+            <div class="section-content">
+                <p>World Name: ${world.name}</p>
+                <h3>Regions:</h3>
+                <ul>
+                    ${world.regions.map(region => `<li>${region.name}</li>`).join('')}
+                </ul>
+            </div>
+        `;
+    }
+
+    async function fetchRegions(worldId) {
+        try {
+            const response = await fetch(`/api/regions/${worldId}`);
+            if (response.status === 401) {
+                window.location.href = '/authorize';
+                return;
+            }
+            if (!response.ok) {
+                throw new Error('Failed to fetch regions');
+            }
+            const regions = await response.json();
+            displayRegions(regions);
+        } catch (error) {
+            console.error('Error fetching regions:', error);
+        }
+    }
+
+    function displayRegions(regions) {
+        const mapSection = document.getElementById('map-section');
+        const grid = createRegionGrid(regions);
+        mapSection.innerHTML = `
+            <h2>Map</h2>
+            <div class="section-content">
+                <div class="grid-container">
+                    ${grid}
+                </div>
+            </div>
+        `;
+    }
+
+    function createRegionGrid(regions) {
+        const coordinates = regions.map(region => region.coordinates);
+        const minX = Math.min(...coordinates.map(coord => coord[0]));
+        const maxX = Math.max(...coordinates.map(coord => coord[0]));
+        const minY = Math.min(...coordinates.map(coord => coord[1]));
+        const maxY = Math.max(...coordinates.map(coord => coord[1]));
+
+        let grid = '';
+        for (let y = maxY; y >= minY; y--) {
+            for (let x = minX; x <= maxX; x++) {
+                const region = regions.find(region => region.coordinates[0] === x && region.coordinates[1] === y);
+                if (region) {
+                    grid += `<div class="grid-item">${region.name}</div>`;
+                } else {
+                    grid += `<div class="grid-item empty"></div>`;
+                }
+            }
+        }
+        return grid;
+    }
+
     async function fetchGameInfo(plotId, characterId) {
         try {
             const response = await fetch(`/api/game-info?plotId=${plotId}&characterId=${characterId}`);
@@ -67,10 +150,18 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             const { plot, character } = await response.json();
             displayGameInfo(plot, character);
+            if (plot.world && plot.world._id) {
+                fetchWorldDetails(plot.world._id);  // Fetch world details using the world ID from the plot
+                fetchRegions(plot.world._id);  // Fetch regions for the world
+            } else {
+                console.error('World ID is not defined in the plot');
+            }
         } catch (error) {
             console.error('Error fetching game info:', error);
         }
+        fetchRecentGameLog(plotId); // Fetch the most recent game log after game info
     }
+    
 
     function displayGameInfo(plot, character) {
         // Display plot and character information in the UI
@@ -100,7 +191,6 @@ document.addEventListener('DOMContentLoaded', () => {
             <div class="section-content">
                 <p>${character.inventory.map(item => `${item.itemName} (x${item.quantity})`).join(', ')}</p>
             </div>
-
         `;
         characterDetails.style.display = 'block';
     }
@@ -154,7 +244,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const viewQuestsBtn = document.getElementById('view-quests-btn');
     const questsModal = document.getElementById('quests-modal');
     const closeModal = document.getElementsByClassName('close')[0];
-    const startGameBtn = document.getElementById('start-game-btn');
 
     // Function to open the modal
     function openModal() {
@@ -178,11 +267,6 @@ document.addEventListener('DOMContentLoaded', () => {
     closeModal.addEventListener('click', closeModalFunc);
     window.addEventListener('click', outsideClick);
 
-    // Event listener for the Start Game button
-    startGameBtn.addEventListener('click', () => {
-        fetchGameInfo(plotId, characterId);
-    });
-
     inputField.addEventListener('keydown', (event) => {
         if (event.key === 'Enter' && !event.shiftKey) {
             event.preventDefault();
@@ -195,25 +279,45 @@ document.addEventListener('DOMContentLoaded', () => {
     async function submitAction() {
         try {
             const inputText = inputField.value.trim();
+            const actionType = document.querySelector('input[name="actionType"]:checked').value;
             if (inputText) {
                 handlePlayerInput(inputText); // Display player input
+    
+                const token = localStorage.getItem('authToken'); // Example method, adjust as needed
+                const headers = {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                };
+    
                 const response = await fetch('/api/input', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({ input: inputText })
+                    headers: headers,
+                    body: JSON.stringify({ input: inputText, actionType, plotId })
                 });
+    
                 if (response.status === 401) {
                     window.location.href = '/authorize';
                     return;
                 }
-
+    
                 if (!response.ok) {
                     throw new Error(`HTTP error! status: ${response.status}`);
                 }
                 const data = await response.json();
-                displayResponse(data); // Display AI response
+                const aiMessage = data.message.outcome || data.message.response || "No response";
+                displayResponse({ message: aiMessage }); // Display AI response
+    
+                // Save the game log entry
+                await fetch('/api/game-logs', {
+                    method: 'POST',
+                    headers: headers,
+                    body: JSON.stringify({ plotId, author: 'Player', content: inputText })
+                });
+                await fetch('/api/game-logs', {
+                    method: 'POST',
+                    headers: headers,
+                    body: JSON.stringify({ plotId, author: 'AI', content: aiMessage })
+                });
             }
         } catch (error) {
             console.error('Error while submitting action:', error);
@@ -222,11 +326,119 @@ document.addEventListener('DOMContentLoaded', () => {
             inputField.value = ''; // Clear input field
         }
     }
+    
+
+    let gameLogIds = [];  // Array to keep track of all loaded game log IDs
+    let oldestGameLogId = null;
+
+    document.getElementById('game-log').addEventListener('scroll', function() {
+        if (this.scrollTop === 0 && oldestGameLogId && !isLoadingOlderLogs) {
+            fetchGameLogById(oldestGameLogId);
+        }
+    });    
+
+    async function fetchRecentGameLog(plotId) {
+        try {
+            const response = await fetch(`/api/game-logs/recent/${plotId}`);
+            if (response.status === 401) {
+                window.location.href = '/authorize';
+                return;
+            }
+            if (!response.ok) {
+                throw new Error('Failed to fetch recent game log');
+            }
+            const data = await response.json();
+            console.log('Fetched recent game log:', data.messages);  // Debug log
+            displayGameLogs(data.messages);
+
+            // Set the oldestGameLogId to the current game log ID and add to gameLogIds array
+            if (data.messages.length > 0) {
+                oldestGameLogId = data.logId;
+                gameLogIds.push(data.logId);
+            }
+        } catch (error) {
+            console.error('Error fetching recent game log:', error);
+        }
+    }
+
+    async function fetchGameLogById(gameLogId) {
+        if (isLoadingOlderLogs) return;  // Prevent multiple simultaneous requests
+        isLoadingOlderLogs = true;
+    
+        try {
+            const response = await fetch(`/api/game-logs/${gameLogId}/${plotId}`);
+            if (response.status === 401) {
+                window.location.href = '/authorize';
+                return;
+            }
+            if (!response.ok) {
+                throw new Error('Failed to fetch game log');
+            }
+            const data = await response.json();
+            console.log('Fetched game log by ID:', data.messages);  // Debug log
+            displayAdditionalGameLogs(data.messages);
+    
+            // Update oldestGameLogId to the previous game log ID, if available
+            const currentIndex = gameLogIds.indexOf(gameLogId);
+            if (currentIndex > 0) {
+                oldestGameLogId = gameLogIds[currentIndex - 1];
+            } else {
+                oldestGameLogId = null;  // No more older logs
+            }
+        } catch (error) {
+            console.error('Error fetching game log:', error);
+        } finally {
+            isLoadingOlderLogs = false;
+        }
+    }
+    
+    
+
+    function displayGameLogs(logs) {
+        const gameLog = document.getElementById('game-log');
+        gameLog.innerHTML = '';
+        logs.forEach(message => {
+            const authorClass = message.author.toLowerCase() === 'player' ? 'user' : 'ai';
+            const messageClass = message.author.toLowerCase() === 'player' ? 'userText' : 'systemText';
+            const logEntry = `
+                <div class="message ${authorClass}">
+                    <div class="author ${authorClass}">${message.author}:</div>
+                    <div class="${messageClass}">
+                        ${message.content}
+                        <span class="timestamp">${new Date(message.timestamp).toLocaleTimeString()}</span>
+                    </div>
+                </div>
+            `;
+            gameLog.innerHTML += logEntry;
+        });
+        gameLog.scrollTop = gameLog.scrollHeight;
+    }
+
+    function displayAdditionalGameLogs(messages) {
+        const gameLog = document.getElementById('game-log');
+        messages.forEach(message => {
+            const authorClass = message.author.toLowerCase() === 'player' ? 'user' : 'ai';
+            const messageClass = message.author.toLowerCase() === 'player' ? 'userText' : 'systemText';
+            const logEntry = `
+                <div class="message ${authorClass}">
+                    <div class="author ${authorClass}">${message.author}:</div>
+                    <div class="${messageClass}">
+                        ${message.content}
+                        <span class="timestamp">${new Date(message.timestamp).toLocaleTimeString()}</span>
+                    </div>
+                </div>
+            `;
+            gameLog.insertAdjacentHTML('afterbegin', logEntry); // Insert at the beginning
+        });
+    }    
+
+
+
 
     async function handlePlayerInput(inputText) {
         const gameLog = document.getElementById('game-log');
         const timestamp = new Date().toLocaleTimeString();
-      
+
         gameLog.innerHTML += `
           <div class="message user">
             <div class="author user">Player:</div>
@@ -257,4 +469,5 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Fetch initial game info and characters
     fetchGameInfo(plotId, characterId);
+
 });

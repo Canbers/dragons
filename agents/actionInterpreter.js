@@ -1,93 +1,102 @@
-const { toolPrompt } = require('../services/gptService');
+const fetch = require('node-fetch');
+const https = require('https');
+const { prompt } = require('../services/gptService');
 
-const interpret = async (input) => {
+const agent = new https.Agent({
+    rejectUnauthorized: false // This allows self-signed certificates
+});
+
+const getRecentMessages = async (plotId, limit = 20, cookies) => {
+    if (!plotId) {
+        throw new Error('plotId is undefined');
+    }
+    const url = `https://localhost:3000/api/game-logs/recent/${plotId}?limit=${limit}`;
     try {
-        const response = await toolPrompt("gpt-3.5-turbo", 
-        "The player has submitted " + input + ". You need to call the appropriate function to handle the player prompt. If it is not a character action, speech, or game/world information request, call the badInput function.",
-        [
-            {
-                "type": "function",
-                "function": {
-                    "name": "handleAction",
-                    "description": "Determine the outcome of a player's action in a fantasy game setting",
-                    "parameters": {
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "handleSay",
-                    "description": "Generate a dialogue response for what the character is saying",
-                    "parameters": {
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "handleAskGM",
-                    "description": "Provide information as a game master about the player's request",
-                    "parameters": {
-                    }
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "badInput",
-                    "description": "The player has submitted an invalid action",
-                    "parameters": {
-                    }
-                }
+        const response = await fetch(url, { 
+            method: 'GET', 
+            headers: { 
+                'Content-Type': 'application/json',
+                'Cookie': cookies 
+            }, 
+            agent 
+        });
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
         }
-        ]
-        );
-        console.log("actionInterpreter response: " + JSON.stringify(response));
-        const toolCall = response.tool_calls[0].function.name;
-        if (response.tool_calls) {
-            const availableFunctions = {
-                handleAction: handleAction,
-                handleSay: handleSay,
-                handleAskGM: handleAskGM,
-                badInput: badInput
-            };
-            const chosenFunction = availableFunctions[toolCall];
-            if (chosenFunction) {
-                const functionResponse = await chosenFunction();
-                console.log("functionResponse within actionInterpreter: " + functionResponse);
-                return { message: functionResponse };
-            } else {
-                console.error('Error: Function not found');
-                return { message: "Error: Function not found" };
-            }
-        }
-        else{
-            return { message: "Error: No function call" };
-        }
+        const data = await response.json();
+        return data.messages;
     } catch (error) {
-        console.error('Error calling OpenAI through gptService:', error);
+        console.error(`Error fetching recent messages: ${error.message}`);
+        throw error;
+    }
+};
+
+const interpret = async (input, actionType, plotId, cookies) => {
+    try {
+        console.log(`Interpreting input for plotId: ${plotId}, actionType: ${actionType}, input: ${input}`);
+        const recentMessages = await getRecentMessages(plotId, 20, cookies);
+        const context = recentMessages.map(msg => ({ role: msg.author === 'Player' ? 'user' : 'assistant', content: msg.content }));
+        const contextString = context.map(c => `${c.role}: ${c.content}`).join('\n');
+
+        let response;
+        switch (actionType) {
+            case 'action':
+                response = await handleAction(input, contextString);
+                break;
+            case 'speak':
+                response = await handleSay(input, contextString);
+                break;
+            case 'askGM':
+                response = await handleAskGM(input, contextString);
+                break;
+            default:
+                response = await badInput();
+        }
+        return { message: response };
+    } catch (error) {
+        console.error('Error handling input:', error);
         return { message: "Failed to generate response" };
     }
 };
 
-
-
-const handleAction = async () => {
-    return "handleAction function called";
+const handleAction = async (input, context) => {
+    const message = `Immediate context: \n${context}\n Now the player wants to perform an action: "${input}". Respond in JSON format {"success": boolean, "outcome": "result of action", "feedback": "additional feedback"}.`;
+    try {
+        const response = await prompt("gpt-3.5-turbo", message);
+        const parsedResponse = JSON.parse(response.content);
+        return parsedResponse;
+    } catch (error) {
+        console.error('Error in handleAction:', error);
+        return { success: false, outcome: "Error handling action", feedback: error.message };
+    }
 };
 
-const handleSay = async () => {
-    return "handleSay function called";
+const handleSay = async (input, context) => {
+    const message = `Immediate context: \n${context}\n Now the player says: "${input}". Generate a dialogue response for the character. Respond in JSON format {"response": "dialogue response"}.`;
+    try {
+        const response = await prompt("gpt-3.5-turbo", message);
+        const parsedResponse = JSON.parse(response.content);
+        return parsedResponse;
+    } catch (error) {
+        console.error('Error in handleSay:', error);
+        return { response: "Error handling speech" };
+    }
 };
 
-const handleAskGM = async () => {
-    return "handleAskGM function called";
+const handleAskGM = async (input, context) => {
+    const message = `Immediate context: \n${context}\n Now the player asks the Game Master: "${input}". Provide the necessary information. Respond in JSON format {"response": "GM response"}.`;
+    try {
+        const response = await prompt("gpt-3.5-turbo", message);
+        const parsedResponse = JSON.parse(response.content);
+        return parsedResponse;
+    } catch (error) {
+        console.error('Error in handleAskGM:', error);
+        return { response: "Error handling GM query" };
+    }
 };
 
 const badInput = async () => {
-    return "badInput function called";
+    return { response: "Invalid action" };
 };
 
 module.exports = { interpret, handleAction, handleSay, handleAskGM, badInput };
-
