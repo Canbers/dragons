@@ -4,6 +4,7 @@
   "description": "Real version",
   "main": "index.js",
   "scripts": {
+    "start": "node server.js",
     "seed": "node ./db/seeds/rootseeds.js",
     "migrate:reset": "mongosh dragons --eval \"db.getCollectionNames().forEach(function(n){db[n].drop()});\" && cd db && migrate-mongo up",
     "migrate:reset:seed": "mongosh dragons --eval \"db.getCollectionNames().forEach(function(n){db[n].drop()});\" && cd db && migrate-mongo up && npm run seed"
