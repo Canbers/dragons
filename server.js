@@ -3,17 +3,20 @@ const path = require('path');
 const fs = require('fs');
 const https = require('https');
 const mongoose = require('mongoose');
-const { auth, requiresAuth } = require('express-openid-connect');
+const { auth } = require('express-openid-connect');
 require('dotenv').config();
-
+const bodyParser = require('body-parser');
 const app = express();
 const cors = require('cors');
 const Plot = require('./db/models/Plot.js');
 const Quest = require('./db/models/Quest.js');
-const Character = require('./db/models/character.js');
+const Character = require('./db/models/Character.js');
+const Region = require('./db/models/Region'); 
 const Settlement = require('./db/models/Settlement.js');
 const World = require('./db/models/World.js');
+const GameLog = require('./db/models/GameLog.js');
 const actionInterpreter = require('./agents/actionInterpreter');
+const { summarizeLogs } = require('./services/gptService');
 
 mongoose.connect('mongodb://localhost:27017/dragons', {
     useNewUrlParser: true,
@@ -23,6 +26,8 @@ mongoose.connect('mongodb://localhost:27017/dragons', {
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
+app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({ extended: true }));
 
 // Set up CORS to allow requests from your local development environment
 const corsOptions = {
@@ -83,17 +88,6 @@ app.get('/auth/status', (req, res) => {
     }
 });
 
-// Middleware to check if the user is authenticated and has selected a world
-function checkWorldSelection(req, res, next) {
-    if (!req.oidc.isAuthenticated()) {
-        return res.redirect('/');
-    }
-    if (!req.query.worldId) {
-        return res.redirect('/profile');
-    }
-    next();
-}
-
 // Middleware to check if the user is authenticated and redirect if not
 function ensureAuthenticated(req, res, next) {
     if (!req.oidc.isAuthenticated()) {
@@ -118,7 +112,7 @@ app.get('/profile', ensureAuthenticated, (req, res) => {
 });
 
 // Serve index.html with world selection and authentication check
-app.get('/index.html', ensureAuthenticated, checkWorldSelection, (req, res) => {
+app.get('/index.html', ensureAuthenticated, (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
@@ -132,6 +126,55 @@ app.get('/api/worlds', ensureAuthenticated, async (req, res) => {
     }
 });
 
+// Fetch World Details
+app.get('/api/worlds/:worldId', ensureAuthenticated, async (req, res) => {
+    try {
+        const worldId = req.params.worldId;
+        if (!mongoose.Types.ObjectId.isValid(worldId)) {
+            return res.status(400).send('Invalid worldId format');
+        }
+        const world = await World.findById(worldId);
+        if (!world) {
+            return res.status(404).send('World not found');
+        }
+        res.json(world);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Fetch Regions by World ID
+app.get('/api/regions/:worldId', ensureAuthenticated, async (req, res) => {
+    try {
+        const worldId = req.params.worldId;
+        if (!mongoose.Types.ObjectId.isValid(worldId)) {
+            return res.status(400).send('Invalid worldId format');
+        }
+        const regions = await Region.find({ world: worldId });
+        if (!regions) {
+            return res.status(404).send('No regions found for this world');
+        }
+        res.json(regions);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Describe settlements in a region
+app.post('/api/describe-settlements/:regionId', ensureAuthenticated, async (req, res) => {
+    try {
+        const regionId = req.params.regionId;
+        if (!mongoose.Types.ObjectId.isValid(regionId)) {
+            return res.status(400).send('Invalid regionId format');
+        }
+        await regionFactory.describeSettlements(regionId);
+        res.sendStatus(200);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+
 // Fetch Game Info
 app.get('/api/game-info', ensureAuthenticated, async (req, res) => {
     try {
@@ -140,8 +183,8 @@ app.get('/api/game-info', ensureAuthenticated, async (req, res) => {
         if (!mongoose.Types.ObjectId.isValid(plotId) || !mongoose.Types.ObjectId.isValid(characterId)) {
             return res.status(400).send('Invalid ID format');
         }
-        const plot = await Plot.findById(plotId).populate({
-            path: 'quests',
+        const plot = await Plot.findById(plotId).populate('world').populate({
+            path: 'quests.quest',
             model: 'Quest'
         });
         const character = await Character.findById(characterId);
@@ -153,6 +196,104 @@ app.get('/api/game-info', ensureAuthenticated, async (req, res) => {
         res.status(500).send(error.message);
     }
 });
+
+// Fetch the most recent game log associated with a plot
+app.get('/api/game-logs/recent/:plotId', ensureAuthenticated, async (req, res) => {
+    try {
+        console.log(`Received request for recent game logs with plotId: ${req.params.plotId}`);
+        const plotId = req.params.plotId;
+        const limit = parseInt(req.query.limit, 10) || 20;  // Default to 20 if limit is not provided or invalid
+        if (!mongoose.Types.ObjectId.isValid(plotId)) {
+            return res.status(400).send('Invalid plotId format');
+        }
+
+        const plot = await Plot.findById(plotId).populate({
+            path: 'gameLogs',
+            options: { sort: { _id: -1 }, limit: 1 }
+        });
+
+        if (!plot || !plot.gameLogs.length) {
+            console.log(`No game logs found for plotId: ${plotId}`);
+            return res.status(404).send('No game logs found for this plot');
+        }
+
+        const recentMessages = plot.gameLogs[0].messages.slice(-limit);  // Get the most recent messages up to the limit
+        res.json({ messages: recentMessages, logId: plot.gameLogs[0]._id });
+    } catch (error) {
+        console.error(`Error processing request for recent game logs: ${error.message}`);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+
+
+app.get('/api/game-logs/:gameLogId/:plotId', ensureAuthenticated, async (req, res) => {
+    try {
+        const { gameLogId, plotId } = req.params;
+        if (!mongoose.Types.ObjectId.isValid(gameLogId) || !mongoose.Types.ObjectId.isValid(plotId)) {
+            return res.status(400).send('Invalid ID format');
+        }
+
+        const plot = await Plot.findById(plotId).populate('gameLogs');
+        if (!plot) {
+            return res.status(404).send('Plot not found');
+        }
+
+        const currentIndex = plot.gameLogs.findIndex(log => log.equals(gameLogId));
+        if (currentIndex <= 0) {
+            return res.status(404).send('No older game logs found');
+        }
+
+        const olderGameLogId = plot.gameLogs[currentIndex - 1];
+        const olderGameLog = await GameLog.findById(olderGameLogId);
+
+        if (!olderGameLog) {
+            return res.status(404).send('Older game log not found');
+        }
+
+        res.json({ messages: olderGameLog.messages, logId: olderGameLog._id });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+
+// Create or update a game log entry
+app.post('/api/game-logs', ensureAuthenticated, async (req, res) => {
+    try {
+        const { plotId, author, content } = req.body;
+        const plot = await Plot.findById(plotId).populate('gameLogs');
+        if (!plot) return res.status(404).send('Plot not found');
+
+        let gameLog = plot.gameLogs[plot.gameLogs.length - 1];
+        if (!gameLog || gameLog.messages.length >= 50) {
+            if (gameLog) {
+                // Summarize the messages of the current game log that reached its cap
+                const logsToSummarize = gameLog.messages;
+                const summary = await summarizeLogs(logsToSummarize);
+                gameLog.summary = summary;  // Add the summary to the same game log
+                await gameLog.save();
+            }
+
+            // Create a new game log
+            gameLog = new GameLog({ plotId, messages: [] });
+            plot.gameLogs.push(gameLog._id);
+            await plot.save();
+        } else {
+            gameLog = await GameLog.findById(gameLog._id);
+        }
+
+        gameLog.messages.push({ author, content });
+        await gameLog.save();
+
+        res.status(201).json(gameLog);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+
+
 
 // Fetch Quest Details
 app.get('/api/quest-details', ensureAuthenticated, async (req, res) => {
@@ -178,13 +319,21 @@ app.get('/api/quest-details', ensureAuthenticated, async (req, res) => {
 // Interpret User Input
 app.post('/api/input', ensureAuthenticated, async (req, res) => {
     try {
-        const { input } = req.body;
-        const response = await actionInterpreter.interpret(input);
+        const { input, actionType, plotId } = req.body;
+        const cookies = req.headers.cookie; // Extract cookies from the request headers
+
+        if (!cookies) {
+            return res.status(401).send('Cookies are missing');
+        }
+
+        const response = await actionInterpreter.interpret(input, actionType, plotId, cookies);
         res.json(response);
     } catch (error) {
         res.status(500).send(error.message);
     }
 });
+
+
 
 // Create or fetch plot for a given world
 app.post('/api/plot', ensureAuthenticated, async (req, res) => {
