@@ -45,10 +45,7 @@ const Character = new Schema({
             type: Number,
             default: 0
         },
-        location: {
-            type: mongoose.Schema.Types.ObjectId,
-            ref: 'Settlement'
-        },
+
         statusEffects: [String]
     },
     originLocation: {

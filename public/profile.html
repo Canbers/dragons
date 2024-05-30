@@ -47,44 +47,93 @@
                 <!-- Character rows will be dynamically populated here -->
             </tbody>
         </table>
-        <button id="create-character-btn" class="button">Create New Character</button>
+        <!-- Dropdown for creating a character -->
+        <div class="dropdown">
+            <button id="create-character-btn" class="button">Create Character</button>
+            <div id="create-character-dropdown" class="dropdown-content">
+                <button id="join-existing-game-btn">Join Existing Game</button>
+                <button id="create-new-plot-btn">New Game in Existing World</button>
+                <button id="create-new-world-btn">Create New World and Game</button>
+            </div>
+        </div>
     </div>
 </div>
 
-<!-- Modal for Character Creation -->
-<div id="character-modal" class="modal">
+<div id="join-game-modal" class="modal" style="display: none;">
     <div class="modal-content">
         <span class="close">&times;</span>
-        <div id="game-options">
-            <h2>Create New Character</h2>
-            <button id="join-existing-game-btn">Join Existing Game</button>
-            <button id="create-new-game-btn">Create New Game</button>
+        <div class="modal-body">
+            <h3>Enter Plot ID</h3>
+            <input type="text" id="plot-id-input" required>
+            <div id="plot-id-error" style="display: none; color: red;">Invalid Plot ID. Please try again.</div>
         </div>
-        <form id="plot-id-form" style="display:none;">
-            <label for="plot-id">Enter Plot ID:</label>
-            <input type="text" id="plot-id" name="plot-id" required>
-            <button type="submit">Next</button>
-        </form>
-        <form id="world-selection-form" style="display:none;">
-            <label for="world-id">Select World:</label>
-            <select id="world-id" name="world-id">
-                <!-- Worlds will be dynamically populated here -->
-            </select>
-            <button type="submit">Next</button>
-        </form>
-        <form id="character-form" style="display:none;">
+        <div class="modal-footer">
+            <button type="button" id="validate-plot-id">Next</button>
+        </div>
+    </div>
+</div>
+
+<div id="new-plot-modal" class="modal" style="display: none;">
+    <div class="modal-content">
+        <span class="close">&times;</span>
+        <div class="modal-body">
+            <h3>Select World</h3>
+            <select id="world-select" required></select>
+            <div id="world-description"></div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" id="generate-new-plot">Next</button>
+        </div>
+    </div>
+</div>
+
+<div id="new-world-modal" class="modal" style="display: none;">
+    <div class="modal-content">
+        <span class="close">&times;</span>
+        <div class="modal-body">
+            <h3>Enter New World Name</h3>
+            <input type="text" id="new-world-name" required>
+        </div>
+        <div class="modal-footer">
+            <button type="button" id="generate-new-world">Next</button>
+        </div>
+    </div>
+</div>
+
+<div id="character-creator-modal" class="modal" style="display: none;">
+    <div class="modal-content">
+        <span class="close">&times;</span>
+        <div class="modal-body">
+            <h3>Character Details</h3>
             <label for="char-name">Name:</label>
             <input type="text" id="char-name" name="char-name" required>
             <label for="char-age">Age:</label>
             <input type="number" id="char-age" name="char-age" required>
             <label for="char-race">Race:</label>
-            <input type="text" id="char-race" name="char-race" required>
+            <select id="char-race" name="char-race" required>
+                <option value="Human">Human</option>
+                <option value="Elf">Elf</option>
+                <option value="Dwarf">Dwarf</option>
+            </select>
             <label for="char-class">Class:</label>
-            <input type="text" id="char-class" name="char-class" required>
-            <button type="submit">Create Character</button>
-        </form>
+            <select id="char-class" name="char-class" required>
+                <option value="Warrior">Warrior</option>
+                <option value="Mage">Mage</option>
+                <option value="Rogue">Rogue</option>
+            </select>
+        </div>
+        <div class="modal-footer">
+            <button type="button" id="confirm-character">Confirm</button>
+        </div>
     </div>
 </div>
+
+<div id="loading-spinner" class="spinner" style="display: none;">
+    <div class="spinner-content">
+        <div class="loader"></div>
+    </div>
+</div>
+
 
 <script src="/profile.js" type="module"></script>
 </body>
