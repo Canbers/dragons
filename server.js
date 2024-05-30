@@ -2,12 +2,15 @@ const express = require('express');
 const path = require('path');
 const fs = require('fs');
 const https = require('https');
+const socketIo = require('socket.io');
 const mongoose = require('mongoose');
 const { auth } = require('express-openid-connect');
 require('dotenv').config();
 const bodyParser = require('body-parser');
 const app = express();
 const cors = require('cors');
+const { generateWorld } = require('./agents/world/factories/worldFactory');
+const regionFactory = require('./agents/world/factories/regionsFactory.js');
 const Plot = require('./db/models/Plot.js');
 const Quest = require('./db/models/Quest.js');
 const Character = require('./db/models/Character.js');
@@ -17,6 +20,8 @@ const World = require('./db/models/World.js');
 const GameLog = require('./db/models/GameLog.js');
 const actionInterpreter = require('./agents/actionInterpreter');
 const { summarizeLogs } = require('./services/gptService');
+const { getWorldAndRegionDetails, getInitialQuests } = require('./agents/world/storyTeller.js');
+
 
 mongoose.connect('mongodb://localhost:27017/dragons', {
     useNewUrlParser: true,
@@ -28,6 +33,9 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
+// Add this line to serve static files from the /agents/world/factories/mapIcons directory
+app.use('/mapIcons', express.static(path.join(__dirname, 'agents', 'world', 'factories', 'mapIcons')));
+
 
 // Set up CORS to allow requests from your local development environment
 const corsOptions = {
@@ -116,6 +124,24 @@ app.get('/index.html', ensureAuthenticated, (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
+app.post('/api/generate-world', ensureAuthenticated, async (req, res) => {
+    try {
+        const { worldName } = req.body;
+
+        const existingWorld = await World.findOne({ name: worldName });
+        if (existingWorld) {
+            return res.status(400).json({ error: 'World name already exists. Please choose a different name.' });
+        }
+
+        const newWorld = await generateWorld(worldName);
+
+        res.json(newWorld);
+    } catch (error) {
+        console.error("Error generating world:", error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // Fetch all worlds
 app.get('/api/worlds', ensureAuthenticated, async (req, res) => {
     try {
@@ -160,20 +186,62 @@ app.get('/api/regions/:worldId', ensureAuthenticated, async (req, res) => {
     }
 });
 
-// Describe settlements in a region
-app.post('/api/describe-settlements/:regionId', ensureAuthenticated, async (req, res) => {
+// Fetch a specific region by ID
+app.get('/api/region/:regionId', ensureAuthenticated, async (req, res) => {
     try {
         const regionId = req.params.regionId;
         if (!mongoose.Types.ObjectId.isValid(regionId)) {
             return res.status(400).send('Invalid regionId format');
         }
-        await regionFactory.describeSettlements(regionId);
-        res.sendStatus(200);
+        const region = await Region.findById(regionId); // Fetch the full region record
+        if (!region) {
+            return res.status(404).send('Region not found');
+        }
+        res.json(region); // Return the full region record
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
 });
 
+// Endpoint to fetch all settlements by region ID
+app.get('/api/settlements/region/:regionId', async (req, res) => {
+    try {
+        const { regionId } = req.params;
+        const settlements = await Settlement.find({ region: regionId });
+        res.json(settlements);
+    } catch (error) {
+        console.error('Error fetching settlements:', error);
+        res.status(500).json({ error: 'Failed to fetch settlements' });
+    }
+});
+
+// Fetch world and region details
+app.get('/api/world-and-region/:plotId', ensureAuthenticated, async (req, res) => {
+    try {
+        const plotId = req.params.plotId;
+        if (!mongoose.Types.ObjectId.isValid(plotId)) {
+            return res.status(400).send('Invalid plotId format');
+        }
+        const data = await getWorldAndRegionDetails(plotId);
+        res.json(data);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Fetch initial quests
+app.get('/api/initial-quests/:plotId', ensureAuthenticated, async (req, res) => {
+    try {
+        const plotId = req.params.plotId;
+        if (!mongoose.Types.ObjectId.isValid(plotId)) {
+            return res.status(400).send('Invalid plotId format');
+        }
+        const quests = await getInitialQuests(plotId);
+        res.json(quests);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
 
 // Fetch Game Info
 app.get('/api/game-info', ensureAuthenticated, async (req, res) => {
@@ -319,14 +387,14 @@ app.get('/api/quest-details', ensureAuthenticated, async (req, res) => {
 // Interpret User Input
 app.post('/api/input', ensureAuthenticated, async (req, res) => {
     try {
-        const { input, actionType, plotId } = req.body;
+        const { input, inputType, plotId } = req.body;
         const cookies = req.headers.cookie; // Extract cookies from the request headers
 
         if (!cookies) {
             return res.status(401).send('Cookies are missing');
         }
 
-        const response = await actionInterpreter.interpret(input, actionType, plotId, cookies);
+        const response = await actionInterpreter.interpret(input, inputType, plotId, cookies);
         res.json(response);
     } catch (error) {
         res.status(500).send(error.message);
@@ -334,15 +402,82 @@ app.post('/api/input', ensureAuthenticated, async (req, res) => {
 });
 
 
+const describeRegionAndSettlements = async (regionId) => {
+    const region = await Region.findById(regionId);
+    if (!region.described) {
+        await regionFactory.describe(regionId);
+    }
+    await regionFactory.describeSettlements(regionId);
+};
+
+// Get a plot by ID
+app.get('/api/plots/:plotId', ensureAuthenticated, async (req, res) => {
+    const { plotId } = req.params;
+    try {
+        const plot = await Plot.findById(plotId)
+        if (!plot) {
+            return res.status(404).json({ error: 'Game not found' });
+        }
+        res.json(plot);
+    } catch (error) {
+        res.status(400).json({ error: error.message });
+    }
+});
 
 // Create or fetch plot for a given world
+// Assign initial region and settlement when creating a new plot
 app.post('/api/plot', ensureAuthenticated, async (req, res) => {
     try {
         const { worldId } = req.body;
         if (!mongoose.Types.ObjectId.isValid(worldId)) {
             return res.status(400).send('Invalid worldId format');
         }
-        const plot = new Plot({ world: worldId, quests: [], milestones: [] });
+
+        const regions = await Region.find({ world: worldId });
+        if (!regions.length) {
+            return res.status(404).send('No regions found in this world');
+        }
+        const initialRegion = regions[Math.floor(Math.random() * regions.length)];
+        const initialSettlement = initialRegion.settlements.length ? initialRegion.settlements[Math.floor(Math.random() * initialRegion.settlements.length)] : null;
+
+        await describeRegionAndSettlements(initialRegion._id);
+
+        let locationName, locationDescription, coordinates;
+
+        if (initialSettlement) {
+            const settlement = await Settlement.findById(initialSettlement);
+            locationName = settlement.name;
+            locationDescription = settlement.description;
+            const randomIndex = Math.floor(Math.random() * settlement.coordinates.length);
+            coordinates = settlement.coordinates[randomIndex];
+        } else {
+            locationName = initialRegion.name;
+            locationDescription = initialRegion.description;
+            const randomIndex = Math.floor(Math.random() * region.coordinates.length);
+            coordinates = initialRegion.coordinates[randomIndex];
+        }
+        
+
+        const plot = new Plot({
+            world: worldId,
+            quests: [],
+            milestones: [],
+            current_state: {
+                current_activity: 'exploring',
+                current_location: {
+                    region: initialRegion._id,
+                    settlement: initialSettlement ? initialSettlement._id : null,
+                    coordinates: coordinates,
+                    locationName: locationName,
+                    locationDescription: locationDescription,
+                    description: initialSettlement ? initialSettlement.name : initialRegion.name
+                },
+                current_time: 'morning', // Default initial time
+                environment_conditions: 'clear', // Default initial conditions
+                mood_tone: 'neutral' // Default initial mood
+            }
+        });
+
         await plot.save();
         res.json(plot);
     } catch (error) {
@@ -473,19 +608,37 @@ app.post('/api/assign-character', ensureAuthenticated, async (req, res) => {
             await plot.save();
         }
 
+        // Update character's plot, currentStatus.location, coordinates, locationName, and locationDescription
         character.plot = plotId;
+        character.currentStatus.location = plot.current_state.current_location.settlement;
+        character.currentStatus.coordinates = plot.current_state.current_location.coordinates;
+
+        if (plot.current_state.current_location.settlement) {
+            const settlement = await Settlement.findById(plot.current_state.current_location.settlement);
+            character.currentStatus.locationName = settlement.name;
+            character.currentStatus.locationDescription = settlement.description;
+        } else {
+            const region = await Region.findById(plot.current_state.current_location.region);
+            character.currentStatus.locationName = region.name;
+            character.currentStatus.locationDescription = region.description;
+        }
+
         await character.save();
 
         res.json(plot);
     } catch (error) {
         res.status(500).send(error.message);
     }
-});
+})
 
+// localhost Certificate
 const httpsOptions = {
     key: fs.readFileSync('localhost-key.pem'),
     cert: fs.readFileSync('localhost.pem')
 };
+
+
+
 
 const PORT = process.env.PORT || 3000;
 https.createServer(httpsOptions, app).listen(PORT, () => {

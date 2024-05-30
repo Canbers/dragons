@@ -13,7 +13,7 @@ const Settlement = new Schema(
             ref: 'Region'
         },
         coordinates: {
-            type: [Number],
+            type: [[Number]], // Change to an array of coordinate arrays
             required: true,
         },
         size: {
@@ -42,13 +42,13 @@ const Settlement = new Schema(
         image: String
     }
 );
+
 Settlement.index({
     name: 1,
     region: 1,
     coordinates: 1,
-},
-{
+}, {
     unique: true
-}
-)
+});
+
 module.exports = mongoose.model('Settlement', Settlement);

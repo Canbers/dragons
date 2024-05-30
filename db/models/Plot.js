@@ -23,7 +23,45 @@ const Plot = new Schema(
             },
         ],
         current_state: {
-            type: String,
+            current_activity: {
+                type: String,
+                enum: ['conversation', 'exploring', 'in combat', 'resting', 'traveling'],
+                default: 'exploring'
+            },
+            current_location: {
+                region: {
+                    type: mongoose.Schema.Types.ObjectId,
+                    ref: 'Region'
+                },
+                settlement: {
+                    type: mongoose.Schema.Types.ObjectId,
+                    ref: 'Settlement'
+                },
+                coordinates: {
+                    type: [Number], // [x, y] coordinates
+                    default: [0, 0]
+                },
+                locationName: {
+                    type: String,
+                    default: ''
+                },
+                locationDescription: {
+                    type: String,
+                    default: ''
+                },
+                description: {
+                    type: String, // e.g., "traveling between settlements", "exploring ruins"
+                }
+            },
+            current_time: {
+                type: String, // e.g., "morning", "evening", "night"
+            },
+            environment_conditions: {
+                type: String, // e.g., "raining", "sunny", "hot", "cold"
+            },
+            mood_tone: {
+                type: String, // e.g., "tense", "relaxed"
+            }
         },
         quests: [
             {

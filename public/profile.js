@@ -2,34 +2,15 @@ import { setupAuthUI } from './auth.js';
 
 document.addEventListener('DOMContentLoaded', () => {
     setupAuthUI();
-    const loginBtn = document.getElementById('login-btn');
     const logoutBtn = document.getElementById('logout-btn');
     const profileBtn = document.getElementById('profile-btn');
     const userMenuButton = document.getElementById('user-menu-button');
     const userDropdown = document.getElementById('user-dropdown');
-    const usernameDisplay = document.getElementById('username');
-    const userMenu = document.getElementById('user-menu');
-    const userDetails = document.getElementById('user-details');
     const characterTable = document.getElementById('character-table').querySelector('tbody');
     const createCharacterBtn = document.getElementById('create-character-btn');
-    const modal = document.getElementById('character-modal');
-    const closeModal = document.getElementsByClassName('close')[0];
-    const gameOptions = document.getElementById('game-options');
-    const joinExistingGameBtn = document.getElementById('join-existing-game-btn');
-    const createNewGameBtn = document.getElementById('create-new-game-btn');
-    const plotIdForm = document.getElementById('plot-id-form');
-    const worldSelectionForm = document.getElementById('world-selection-form');
-    const characterForm = document.getElementById('character-form');
-    const worldIdSelect = document.getElementById('world-id');
-    let selectedPlotId = null;
+    const createCharacterDropdown = document.getElementById('create-character-dropdown');
+    const loadingSpinner = document.getElementById('loading-spinner');
 
-    // Display user details
-    function displayUserDetails(user) {
-        userDetails.innerHTML = `
-            <p>Name: ${user.name}</p>
-            <p>Email: ${user.email}</p>
-        `;
-    }
 
     // Logout action
     logoutBtn.addEventListener('click', () => {
@@ -52,6 +33,7 @@ document.addEventListener('DOMContentLoaded', () => {
         userDropdown.classList.toggle('show');
     });
 
+
     // Close the dropdown if the user clicks outside of it
     window.onclick = (event) => {
         if (!event.target.matches('#user-menu-button') && !event.target.matches('#username') && !event.target.matches('.arrow')) {
@@ -61,8 +43,58 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
 
+    // Show spinner
+    function showSpinner() {
+        loadingSpinner.style.display = 'flex';
+    }
+
+    // Hide spinner
+    function hideSpinner() {
+        loadingSpinner.style.display = 'none';
+    }
+
+    // Toggle create character dropdown
+    createCharacterBtn.addEventListener('click', (event) => {
+        const isDropdownVisible = createCharacterDropdown.classList.contains('show');
+        createCharacterDropdown.classList.remove('show');
+
+        if (!isDropdownVisible) {
+            createCharacterDropdown.style.left = `${event.target.offsetLeft}px`;
+            createCharacterDropdown.style.top = `${event.target.offsetTop + event.target.offsetHeight}px`;
+            createCharacterDropdown.classList.add('show');
+        }
+    });
+
+    // Close the dropdown if the user clicks outside of it
+    window.addEventListener('click', (event) => {
+        if (!event.target.matches('#create-character-btn') && !event.target.closest('.dropdown-content')) {
+            createCharacterDropdown.classList.remove('show');
+        }
+    });
+
+    // General modal handling code
+    const modals = document.querySelectorAll('.modal');
+    const closeButtons = document.querySelectorAll('.close');
+    
+
+    closeButtons.forEach((btn, index) => {
+        btn.addEventListener('click', () => {
+            modals[index].style.display = 'none';
+        });
+    });
+
+    window.addEventListener('click', (event) => {
+        modals.forEach(modal => {
+            if (event.target == modal) {
+                modal.style.display = 'none';
+            }
+        });
+    });
+
+
     // Fetch and display characters for the logged-in user
     async function fetchCharacters() {
+        showSpinner();
         try {
             const response = await fetch('/api/characters');
             if (response.status === 401) {
@@ -72,6 +104,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!response.ok) {
                 throw new Error('Failed to fetch characters');
             }
+            hideSpinner();
             const characters = await response.json();
             characterTable.innerHTML = characters.map(character => `
                 <tr>
@@ -95,160 +128,180 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
             });
         } catch (error) {
+            hideSpinner();
             console.error('Error fetching characters:', error);
         }
     }
 
-    // Fetch and display worlds for creating new plot
-    async function fetchWorlds() {
+    // Handle create character options
+    // Join Existing Game
+    document.getElementById('join-existing-game-btn').addEventListener('click', () => {
+        document.getElementById('join-game-modal').style.display = 'block';
+    });
+    
+    document.getElementById('validate-plot-id').addEventListener('click', async () => {
+        const plotId = document.getElementById('plot-id-input').value;
+        showSpinner();
+        try {
+            const response = await fetch(`/api/plots/${plotId}`);
+            if (!response.ok) {
+                throw new Error('Plot not found');
+            }
+            // Plot is valid
+            hideSpinner();
+            document.getElementById('join-game-modal').style.display = 'none';
+            openCharacterCreatorModal(plotId);
+        } catch (error) {
+            hideSpinner();
+            document.getElementById('plot-id-error').style.display = 'block';
+        }
+    });
+
+    // New Plot/Game in existing world
+    document.getElementById('create-new-plot-btn').addEventListener('click', async () => {
+        document.getElementById('new-plot-modal').style.display = 'block';
+        showSpinner();
         try {
             const response = await fetch('/api/worlds');
-            if (response.status === 401) {
-                window.location.href = '/authorize';
-                return;
-            }
-            if (!response.ok) {
-                throw new Error('Failed to fetch worlds');
-            }
             const worlds = await response.json();
-            worldIdSelect.innerHTML = worlds.map(world => `<option value="${world._id}">${world.name}</option>`).join('');
+            hideSpinner();
+            const worldSelect = document.getElementById('world-select');
+            worldSelect.innerHTML = worlds.map(world => `<option value="${world._id}">${world.name}</option>`).join('');
         } catch (error) {
+            hideSpinner();
             console.error('Error fetching worlds:', error);
         }
-    }
-
-    // Handle creating a new character
-    createCharacterBtn.addEventListener('click', () => {
-        gameOptions.style.display = 'block';
-        plotIdForm.style.display = 'none';
-        worldSelectionForm.style.display = 'none';
-        characterForm.style.display = 'none';
-        modal.style.display = 'block';
     });
-
-    closeModal.addEventListener('click', () => {
-        modal.style.display = 'none';
-    });
-
-    window.onclick = (event) => {
-        if (event.target == modal) {
-            modal.style.display = 'none';
-        }
-    };
-
-    joinExistingGameBtn.addEventListener('click', () => {
-        gameOptions.style.display = 'none';
-        plotIdForm.style.display = 'block';
-    });
-
-    createNewGameBtn.addEventListener('click', () => {
-        gameOptions.style.display = 'none';
-        fetchWorlds();
-        worldSelectionForm.style.display = 'block';
-    });
-
-    plotIdForm.addEventListener('submit', (event) => {
-        event.preventDefault();
-        selectedPlotId = document.getElementById('plot-id').value;
-        plotIdForm.style.display = 'none';
-        characterForm.style.display = 'block';
-    });
-
-    worldSelectionForm.addEventListener('submit', async (event) => {
-        event.preventDefault();
-        const worldId = document.getElementById('world-id').value;
+    
+    document.getElementById('world-select').addEventListener('change', async (event) => {
+        const worldId = event.target.value;
+        showSpinner();
         try {
-            const plotResponse = await fetch('/api/plot', {
+            const response = await fetch(`/api/worlds/${worldId}`);
+            const world = await response.json();
+            hideSpinner();
+            document.getElementById('world-description').innerText = world.description;
+        } catch (error) {
+            hideSpinner();
+            console.error('Error fetching world description:', error);
+        }
+    });
+    
+    document.getElementById('generate-new-plot').addEventListener('click', async () => {
+        const worldId = document.getElementById('world-select').value;
+        showSpinner();
+        try {
+            const response = await fetch('/api/plot', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({ worldId })
             });
-
-            if (!plotResponse.ok) {
-                throw new Error('Failed to create new plot');
-            }
-
-            const newPlot = await plotResponse.json();
-            selectedPlotId = newPlot._id;
-            worldSelectionForm.style.display = 'none';
-            characterForm.style.display = 'block';
+            const plot = await response.json();
+            hideSpinner();
+            document.getElementById('new-plot-modal').style.display = 'none';
+            openCharacterCreatorModal(plot._id);
         } catch (error) {
+            hideSpinner();
             console.error('Error creating plot:', error);
         }
     });
-
-    characterForm.addEventListener('submit', async (event) => {
-        event.preventDefault();
-
-        const characterData = {
-            name: document.getElementById('char-name').value,
-            age: parseInt(document.getElementById('char-age').value, 10),
-            race: document.getElementById('char-race').value,
-            class: document.getElementById('char-class').value,
-            plot: selectedPlotId,
-            stats: {
-                strength: parseInt(prompt('Enter character strength:'), 10),
-                intelligence: parseInt(prompt('Enter character intelligence:'), 10),
-                agility: parseInt(prompt('Enter character agility:'), 10)
-            },
-            currentStatus: {
-                health: 100,
-                mana: 100,
-                location: null,
-                statusEffects: []
-            },
-            originLocation: null,
-            inventory: [],
-        };
-
+    
+    // New world
+    document.getElementById('create-new-world-btn').addEventListener('click', () => {
+        document.getElementById('new-world-modal').style.display = 'block';
+    });
+    
+    document.getElementById('generate-new-world').addEventListener('click', async () => {
+        const worldName = document.getElementById('new-world-name').value;
+        showSpinner();
         try {
-            const characterResponse = await fetch('/api/characters', {
+            const worldResponse = await fetch('/api/generate-world', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify(characterData)
+                body: JSON.stringify({ worldName })
             });
-
-            if (!characterResponse.ok) {
-                throw new Error('Failed to create character');
-            }
-
-            const newCharacter = await characterResponse.json();
-            
-            // Assign character to plot
-            await assignCharacterToPlot(newCharacter._id, selectedPlotId);
-
-            alert(`New character created: ${newCharacter.name}`);
-            fetchCharacters(); // Refresh the character list
-            modal.style.display = 'none';
+            const newWorld = await worldResponse.json();
+            const plotResponse = await fetch('/api/plot', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ worldId: newWorld._id })
+            });
+            const plot = await plotResponse.json();
+            hideSpinner();
+            document.getElementById('new-world-modal').style.display = 'none';
+            openCharacterCreatorModal(plot._id);
         } catch (error) {
-            console.error('Error creating character:', error);
+            hideSpinner();
+            console.error('Error generating new world and plot:', error);
         }
     });
-
-    async function assignCharacterToPlot(characterId, plotId) {
-        try {
-            const response = await fetch('/api/assign-character', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ characterId, plotId })
-            });
-
-            if (!response.ok) {
-                throw new Error('Failed to assign character to plot');
+    
+    // Character Creator
+    function openCharacterCreatorModal(plotId) {
+        document.getElementById('character-creator-modal').style.display = 'block';
+        document.getElementById('confirm-character').addEventListener('click', async () => {
+            const characterData = {
+                name: document.getElementById('char-name').value,
+                age: parseInt(document.getElementById('char-age').value, 10),
+                race: document.getElementById('char-race').value,
+                class: document.getElementById('char-class').value,
+                plot: plotId,
+                stats: assignBaseStats(document.getElementById('char-race').value, document.getElementById('char-class').value),
+            };
+            showSpinner();
+            try {
+                const response = await fetch('/api/characters', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(characterData)
+                });
+    
+                if (!response.ok) {
+                    throw new Error('Failed to create character');
+                }
+    
+                const newCharacter = await response.json();
+                hideSpinner();
+                document.getElementById('character-creator-modal').style.display = 'none';
+                fetchCharacters(); // Refresh the character list
+            } catch (error) {
+                hideSpinner();
+                console.error('Error creating character:', error);
             }
-
-            const updatedPlot = await response.json();
-            console.log(`Character assigned to plot: ${updatedPlot}`);
-        } catch (error) {
-            console.error('Error assigning character to plot:', error);
-        }
+        });
     }
+    
+    function assignBaseStats(race, charClass) {
+        const baseStats = {
+            Human: { strength: 10, intelligence: 10, agility: 10 },
+            Elf: { strength: 8, intelligence: 12, agility: 10 },
+            Dwarf: { strength: 12, intelligence: 8, agility: 10 },
+        };
+    
+        const classModifiers = {
+            Warrior: { strength: 2, intelligence: 0, agility: 1 },
+            Mage: { strength: 0, intelligence: 3, agility: 0 },
+            Rogue: { strength: 1, intelligence: 0, agility: 2 },
+        };
+    
+        const raceStats = baseStats[race] || { strength: 10, intelligence: 10, agility: 10 };
+        const classStats = classModifiers[charClass] || { strength: 0, intelligence: 0, agility: 0 };
+    
+        return {
+            strength: raceStats.strength + classStats.strength,
+            intelligence: raceStats.intelligence + classStats.intelligence,
+            agility: raceStats.agility + classStats.agility,
+        };
+    }    
+    
 
     // Fetch initial character list
     fetchCharacters();
