@@ -5,10 +5,95 @@ const Region = require('../../db/models/Region');
 const Settlement = require('../../db/models/Settlement');
 const Plot = require('../../db/models/Plot');
 const Quest = require('../../db/models/Quest');
-const noteTaker = require('../world/noteTaker')
+const noteTaker = require('../world/noteTaker');
 const gpt = require('../../services/gptService');
-const {uuid} = require('uuidv4');
+const { uuid } = require('uuidv4');
 
+const questBuilder = async (questId) => {
+    try {
+        const quest = await Quest.findById(questId).populate('world');
+        if (!quest) {
+            throw new Error('Quest not found');
+        }
+
+        const { world, questTitle, description, locations } = quest;
+        const primaryLocation = locations.primary;
+        let regionName = 'unknown region';
+        let regionDescription = '';
+        let settlementDescription = '';
+
+        if (primaryLocation) {
+            const settlement = await Settlement.findOne({ name: primaryLocation });
+            if (settlement) {
+                const region = await Region.findById(settlement.region);
+                if (region) {
+                    regionName = region.name;
+                    regionDescription = region.description;
+                    settlementDescription = settlement.description;
+                }
+            }
+        }
+
+        const prompt = `
+            You are a tabletop RPG game master. Create a detailed quest based on the following information:
+            Title: ${questTitle}
+            Description: ${description}
+            Region: ${regionName} - ${regionDescription}
+            Settlement: ${primaryLocation} - ${settlementDescription}
+            
+            Generate a JSON object with the following structure:
+            {
+                "questTitle": "${questTitle}", 
+                "description": "${description}",
+                "triggers": {
+                    "conditions": ["<Trigger condition 1>", "<Trigger condition 2>"]
+                },
+                "keyActors": {
+                    "primary": [
+                        { "name": "<Primary actor 1>", "role": "<Role of primary actor 1>" },
+                        { "name": "<Primary actor 2>", "role": "<Role of primary actor 2>" }
+                    ],
+                    "secondary": [
+                        { "name": "<Secondary actor 1>", "role": "<Role of secondary actor 1>" },
+                        { "name": "<Secondary actor 2>", "role": "<Role of secondary actor 2>" }
+                    ]
+                },
+                "locations": {
+                    "primary": "<Primary location>",
+                    "secondary": ["<Secondary location 1>", "<Secondary location 2>"]
+                },
+                "outcomes": [
+                    { "type": "A", "description": "<Description of outcome A>" },
+                    { "type": "B", "description": "<Description of outcome B>" },
+                    { "type": "C", "description": "<Description of outcome C>" }
+                ],
+                "consequences": {
+                    "immediate": "<Immediate consequence>",
+                    "longTerm": "<Long-term consequence>"
+                }
+            }
+        `;
+        
+        const promptResult = await gpt.prompt('gpt-3.5-turbo', prompt);
+        const detailedQuest = JSON.parse(promptResult.content);
+
+        // Update the quest with the detailed information
+        await Quest.findByIdAndUpdate(questId, {
+            $set: {
+                triggers: detailedQuest.triggers,
+                keyActors: detailedQuest.keyActors,
+                locations: detailedQuest.locations,
+                outcomes: detailedQuest.outcomes,
+                consequences: detailedQuest.consequences
+            }
+        });
+
+        return detailedQuest;
+    } catch (error) {
+        console.error('Error building quest:', error);
+        throw error;
+    }
+};
 
 const storyOptions = async (plotId) => {
     try {
@@ -38,18 +123,25 @@ const storyOptions = async (plotId) => {
 
         console.log('Prompting GPT for 3 quests...');
         const promptResult = await gpt.prompt('gpt-3.5-turbo', `
-            You are a Dungeons and Dragons game master. The players are starting a new game in the world of ${world.name}. Specifically in the region ${regionName}: ${regionDescription}.
+            You are a tabletop RPG game master. The players are starting a new game in the world of ${world.name}. Specifically in the region ${regionName}: ${regionDescription}.
             Please generate three possible initial quests that could only happen in the settlement ${settlementName}: ${settlementDescription}. 
-            Please format it in a JSON array with each JSON object structured as follow: 
-            { "questTitle": "<Title of quest>", "description": "<The 3 to 5 sentence description of the quest>", "firstObjective": "<The first objective of the quest>"}
+            Please format it in a JSON array with each JSON object structured as follows: 
+            { "questTitle": "<Title of quest>", "description": "<The 3 to 5 sentence description of the quest>" }
         `);
 
         const quests = JSON.parse(promptResult.content);
-        console.log(quests);
+        console.log('Generated Quests:', quests);
 
-        await noteTaker.saveQuests(quests, region, settlement._id, plotId);
+        // Save initial quest stubs to the database
+        const savedQuests = await noteTaker.saveQuests(quests, region, settlement._id, plotId);
 
-        return quests;
+        // Use questBuilder to flesh out each quest
+        const detailedQuests = await Promise.all(savedQuests.map(async savedQuest => {
+            return await questBuilder(savedQuest._id);
+        }));
+
+        console.log('Detailed Quests:', detailedQuests);
+        return detailedQuests;
     } catch (error) {
         console.error('Error generating story options:', error);
         throw error;
@@ -71,15 +163,19 @@ const createQuestInCurrentSettlement = async (region_id, settlement_id) => {
         let promptResult = await gpt.prompt('gpt-3.5-turbo', `Generate a quest for the settlement ${settlement.name} in the region ${region.name}.`);
         let quests = JSON.parse(promptResult.content);
 
-        // Save the quests
-        await noteTaker.saveQuests(quests, region, settlement._id);
+        // Save initial quest stubs to the database
+        const savedQuests = await noteTaker.saveQuests(quests, region, settlement._id);
+
+        // Use questBuilder to flesh out each quest
+        const detailedQuests = await Promise.all(savedQuests.map(async savedQuest => {
+            return await questBuilder(savedQuest._id);
+        }));
         
-        return quests;
+        return detailedQuests;
     } catch (error) {
         throw new Error('Failed to create quest: ' + error.message);
     }
 };
-
 
 async function getWorldAndRegionDetails(plotId) {
     try {
@@ -123,5 +219,4 @@ async function getInitialQuests(plotId) {
     }
 }
 
-
-module.exports = { storyOptions, createQuestInCurrentSettlement, getWorldAndRegionDetails, getInitialQuests };
+module.exports = { storyOptions, createQuestInCurrentSettlement, getWorldAndRegionDetails, getInitialQuests, questBuilder };

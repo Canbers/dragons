@@ -26,11 +26,48 @@ const Quest = new Schema(
             enum: ['Not started', 'Active - In progress', 'Not Active - In progress', 'Completed'],
             default: 'Not started',
         },
-        originSettlement: {
-            type: mongoose.Schema.Types.ObjectId,
-            ref: 'Settlement',
-            required: true
+        triggers: {
+            conditions: [
+                {
+                    type: String
+                }
+            ]
+        },
+        keyActors: {
+            primary: [
+                {
+                    name: { type: String },
+                    role: { type: String }
+                }
+            ],
+            secondary: [
+                {
+                    name: { type: String },
+                    role: { type: String }
+                }
+            ]
+        },
+        locations: {
+            primary: {
+                type: String
+            },
+            secondary: [
+                {
+                    type: String
+                }
+            ]
+        },
+        outcomes: [
+            {
+                type: { type: String },
+                description: { type: String }
+            }
+        ],
+        consequences: {
+            immediate: { type: String },
+            longTerm: { type: String }
         }
     }
 );
+
 module.exports = mongoose.model('Quest', Quest);
