@@ -74,6 +74,9 @@ const Plot = new Schema(
                 },
                 questStatus: {
                     type: String
+                },
+                notes: {
+                    type: Array
                 }
             },
         ],

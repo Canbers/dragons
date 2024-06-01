@@ -217,19 +217,6 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
     }
-    // Function to fetch settlements by region ID
-    async function fetchSettlementsByRegionId(regionId) {
-        try {
-            const response = await fetch(`/api/settlements/region/${regionId}`);
-            if (!response.ok) {
-                throw new Error('Failed to fetch settlements');
-            }
-            return await response.json();
-        } catch (error) {
-            console.error('Error fetching settlements:', error);
-            return [];
-        }
-    }
 
 // Store settlement coordinates and details for click detection
 let settlementCoordinates = [];
@@ -670,7 +657,7 @@ async function fetchGameInfo(plotId, characterId) {
                     throw new Error('Failed to fetch initial quests');
                 }
                 const questsData = await questsResponse.json();
-                const intro = await displayInitialQuests(questsData.quests);  // Ensure passing the correct part of the response
+                const intro = await displayInitialQuests(questsData);  // Ensure passing the correct part of the response
                 // save quests intro into game log
                 const token = localStorage.getItem('authToken');
                 const headers = {
@@ -742,36 +729,47 @@ async function fetchGameInfo(plotId, characterId) {
     }
     
     function displayInitialQuests(quests) {
-        if (!Array.isArray(quests) || quests.length < 3) {
+        if (!Array.isArray(quests) || quests.length === 0) {
             console.error('Invalid quests data:', quests);
             return;
         }
     
         const gameLog = document.getElementById('game-log');
-        const questsMessage = `
+        let questsMessage = `
             <div class="message ai">
                 <div class="author">AI:</div>
                 <div class="systemText">
-                    <strong>As you start to explore, you overhear the townspeople discussing multiple problems plaguing the town:</strong><br>
-                    <b>1.</b> ${quests[0].questTitle} - ${quests[0].description}<br>
-                    <b>2.</b> ${quests[1].questTitle} - ${quests[1].description}<br>
-                    <b>3.</b> ${quests[2].questTitle} - ${quests[2].description}<br><br>
+                    <strong>As you start to explore, you overhear the townspeople discussing multiple problems plaguing the town:</strong><br>`;
+    
+        quests.forEach((quest, index) => {
+            questsMessage += `<b>${index + 1}. ${quest.questTitle}</b> - ${quest.description}<br>`;
+        });
+    
+        questsMessage += `<br>
                     You can choose to follow up on these and see if you are able to help, or feel free to ignore their problems and find your own path.<br>
                     <strong>The world is yours to explore!</strong>
                     <span class="timestamp">${new Date().toLocaleTimeString()}</span>
                 </div>
             </div>
         `;
+    
         gameLog.innerHTML += questsMessage;
         gameLog.scrollTop = gameLog.scrollHeight;
-        const returnMessage = `<strong>As you start to explore, you overhear the townspeople discussing multiple problems plaguing the town:</strong><br>
-        <b>1.</b> ${quests[0].questTitle} - ${quests[0].description}<br>
-        <b>2.</b> ${quests[1].questTitle} - ${quests[1].description}<br>
-        <b>3.</b> ${quests[2].questTitle} - ${quests[2].description}<br><br>
-        You can choose to follow up on these and see if you are able to help, or feel free to ignore their problems and find your own path.<br>
-        <strong>The world is yours to explore!</strong>`
+    
+        const returnMessage = `
+            <strong>As you start to explore, you overhear the townspeople discussing multiple problems plaguing the town:</strong><br>`;
+    
+        quests.forEach((quest, index) => {
+            returnMessage += `<b>${index + 1}. ${quest.questTitle}</b> - ${quest.description}<br>`;
+        });
+    
+        returnMessage += `<br>
+            You can choose to follow up on these and see if you are able to help, or feel free to ignore their problems and find your own path.<br>
+            <strong>The world is yours to explore!</strong>`;
+    
         return returnMessage;
     }
+    
     
 
     async function fetchGameLogById(gameLogId) {
