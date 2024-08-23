@@ -23,7 +23,7 @@ const { summarizeLogs } = require('./services/gptService');
 const { getWorldAndRegionDetails, getInitialQuests } = require('./agents/world/storyTeller.js');
 
 
-mongoose.connect('mongodb://localhost:27017/dragons', {
+mongoose.connect(process.env.MONGO_URL, {
     useNewUrlParser: true,
     useUnifiedTopology: true
 }).then(() => console.log('MongoDB connected'))
@@ -631,16 +631,23 @@ app.post('/api/assign-character', ensureAuthenticated, async (req, res) => {
     }
 })
 
-// localhost Certificate
-const httpsOptions = {
-    key: fs.readFileSync('localhost-key.pem'),
-    cert: fs.readFileSync('localhost.pem')
-};
-
-
-
-
+// Environment-specific configuration
 const PORT = process.env.PORT || 3000;
-https.createServer(httpsOptions, app).listen(PORT, () => {
-    console.log(`Server is running on https://localhost:${PORT}`);
-});
+const NODE_ENV = process.env.NODE_ENV || 'development';
+
+if (NODE_ENV === 'production') {
+    // Production mode: assume Railway or your server handles HTTPS
+    http.createServer(app).listen(PORT, () => {
+        console.log(`Server is running in production mode on http://dragons.canby.ca:${PORT}`);
+    });
+} else {
+    // Development mode: use self-signed certificates for HTTPS on localhost
+    const httpsOptions = {
+        key: fs.readFileSync('localhost-key.pem'),
+        cert: fs.readFileSync('localhost.pem')
+    };
+
+    https.createServer(httpsOptions, app).listen(PORT, () => {
+        console.log(`Server is running in development mode on https://localhost:${PORT}`);
+    });
+}
