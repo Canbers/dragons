@@ -8,7 +8,7 @@ const { prompt } = require('../../../services/gptService');
 async function generateWorld(worldName) {
     const worldMessage = `Generate a unique description for a tabletop RPG fantasy world: ${worldName}. Respond in JSON with the format: {'description': 'description'}.`;
 
-    let worldResponse = await prompt("gpt-3.5-turbo", worldMessage);
+    let worldResponse = await prompt("gpt-4o-mini", worldMessage);
 
     let worldDescription = JSON.parse(worldResponse.content).description;
 

@@ -47,7 +47,7 @@ const summarizeLogs = (logs) => {
         try {
             const summaryPrompt = "Summarize the following game logs in a concise manner: " + logs.map(log => log.content).join(' ');
             const completion = await openai.chat.completions.create({
-                model: "gpt-3.5-turbo",
+                model: "gpt-4o-mini",
                 messages: [
                     { role: "system", content: "You are a game master taking notes for a Tabletop RPG style web-app game." },
                     { role: "user", content: summaryPrompt }

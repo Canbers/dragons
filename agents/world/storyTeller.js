@@ -74,7 +74,7 @@ const questBuilder = async (questId) => {
             }
         `;
         
-        const promptResult = await gpt.prompt('gpt-3.5-turbo', prompt);
+        const promptResult = await gpt.prompt('gpt-4o-mini', prompt);
         const detailedQuest = JSON.parse(promptResult.content);
 
         // Update the quest with the detailed information
@@ -122,7 +122,7 @@ const storyOptions = async (plotId) => {
         const settlementDescription = settlement.description;
 
         console.log('Prompting GPT for 3 quests...');
-        const promptResult = await gpt.prompt('gpt-3.5-turbo', `
+        const promptResult = await gpt.prompt('gpt-4o-mini', `
             You are a tabletop RPG game master. The players are starting a new game in the world of ${world.name}. Specifically in the region ${regionName}: ${regionDescription}.
             Please generate three possible initial quests that could only happen in the settlement ${settlementName}: ${settlementDescription}. 
             Please format it in a JSON array with each JSON object structured as follows: 
@@ -160,7 +160,7 @@ const createQuestInCurrentSettlement = async (region_id, settlement_id) => {
         }
 
         // Generate quests (this is just an example, adjust as needed)
-        let promptResult = await gpt.prompt('gpt-3.5-turbo', `Generate a quest for the settlement ${settlement.name} in the region ${region.name}.`);
+        let promptResult = await gpt.prompt('gpt-4o-mini', `Generate a quest for the settlement ${settlement.name} in the region ${region.name}.`);
         let quests = JSON.parse(promptResult.content);
 
         // Save initial quest stubs to the database

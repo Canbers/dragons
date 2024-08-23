@@ -115,7 +115,7 @@ const interpret = async (input, inputType, plotId, cookies) => {
 const actionType = async (input, context) => {
     const message = `Recent game log: ${context}. Player action: "${input}". Is the player trying to travel a long distance from their current location? Respond with JSON {"travel": boolean}`;
     try {
-        const response = await prompt("gpt-3.5-turbo", message);
+        const response = await prompt("gpt-4o-mini", message);
         const parsedResponse = JSON.parse(response.content);
         return parsedResponse;
     } catch (error) {
@@ -129,7 +129,7 @@ const actionType = async (input, context) => {
 const handleAction = async (input, context) => {
     const message = `${context}\nPlayer action: "${input}".\nGenerate the result in JSON format: {"success": boolean, "outcome": "result of action", "stateChangeRequired": boolean}. Set "stateChangeRequired" to true only if the result of the action significantly changes the activity, location, time, conditions, or mood.`;
     try {
-        const response = await prompt("gpt-3.5-turbo", message);
+        const response = await prompt("gpt-4o-mini", message);
         const parsedResponse = JSON.parse(response.content);
         return parsedResponse;
     } catch (error) {
@@ -196,7 +196,7 @@ const handleTravel = async (input, context, plot) => {
         }
 
         // Prompt the AI with the travel context
-        const response = await prompt("gpt-3.5-turbo", travelMessage);
+        const response = await prompt("gpt-4o-mini", travelMessage);
         const parsedResponse = JSON.parse(response.content);
 
         if (parsedResponse.success && parsedResponse.stateChangeRequired) {
@@ -238,7 +238,7 @@ const getNewCoordinates = (currentCoords, direction) => {
 const handleSay = async (input, context) => {
     const message = `Current State: ${context}\nPlayer says: "${input}".\nGenerate a dialogue response for the character in JSON format: {"response": "dialogue response", "stateChangeRequired": boolean}. Set "stateChangeRequired" to true only if the dialogue significantly changes the activity, location, time, conditions, or mood.`;
     try {
-        const response = await prompt("gpt-3.5-turbo", message);
+        const response = await prompt("gpt-4o-mini", message);
         const parsedResponse = JSON.parse(response.content);
         return parsedResponse;
     } catch (error) {
@@ -251,7 +251,7 @@ const handleSay = async (input, context) => {
 const handleAskGM = async (input, context) => {
     const message = `Current State: ${context}\nPlayer asks: "${input}".\nProvide the GM response in JSON format: {"response": "GM response", "stateChangeRequired": false}.`;
     try {
-        const response = await prompt("gpt-3.5-turbo", message);
+        const response = await prompt("gpt-4o-mini", message);
         const parsedResponse = JSON.parse(response.content);
         return parsedResponse;
     } catch (error) {
@@ -293,7 +293,7 @@ const updateCurrentState = async (plot, input, result) => {
         const stateUpdateMessage = `Based on the following context: ${contextWithInput}, determine the updated current state. Provide a response in JSON format {"activity": "new activity", "location": "new location", "time": "new time", "conditions": "new conditions", "mood": "new mood"}. Possible values for activity: ["conversation", "exploring", "in combat", "resting", "traveling"]. conditions should be generalized things (e.g "raining", "sunny", "hot", "cold").`;
         const allowedActivities = ['conversation', 'exploring', 'in combat', 'resting', 'traveling'];
 
-        const aiResponse = await prompt("gpt-3.5-turbo", stateUpdateMessage);
+        const aiResponse = await prompt("gpt-4o-mini", stateUpdateMessage);
         const parsedResponse = JSON.parse(aiResponse.content);
 
         // Validate and update current activity

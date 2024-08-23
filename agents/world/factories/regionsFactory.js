@@ -62,7 +62,7 @@ const describe = async (region_id) => {
             while (retries > 0) {
                 attempt++;
                 try {
-                    let promptResult = await gpt.prompt('gpt-3.5-turbo', `You are creating a region within the Dungeons & Dragons style world ${region.world.name}: ${region.world.description}. Please create a name and description for a region within this world which is located in the ${region.ecosystem.name}. Please format it in JSON as follow: { "name": "<The name of the region>", "description": "<The long, two paragraph description of the region>", "short": "<A short, two sentence summary of the description>"}`);
+                    let promptResult = await gpt.prompt('gpt-4o-mini', `You are creating a region within the Dungeons & Dragons style world ${region.world.name}: ${region.world.description}. Please create a name and description for a region within this world which is located in the ${region.ecosystem.name}. Please format it in JSON as follow: { "name": "<The name of the region>", "description": "<The long, two paragraph description of the region>", "short": "<A short, two sentence summary of the description>"}`);
                     let p = JSON.parse(promptResult.content);
 
                     await Region.findByIdAndUpdate(region_id, { described: true, ...p });

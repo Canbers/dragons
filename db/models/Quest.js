@@ -49,11 +49,17 @@ const Quest = new Schema(
         },
         locations: {
             primary: {
-                type: String
+                type: String,
+                coordinates: {
+                    type: [[Number]]
+                }
             },
             secondary: [
                 {
-                    type: String
+                    type: String,
+                    coordinates: {
+                        type: [[Number]]
+                    }
                 }
             ]
         },
