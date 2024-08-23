@@ -36,15 +36,27 @@ app.use(bodyParser.urlencoded({ extended: true }));
 // Add this line to serve static files from the /agents/world/factories/mapIcons directory
 app.use('/mapIcons', express.static(path.join(__dirname, 'agents', 'world', 'factories', 'mapIcons')));
 
+// CORS config
+const allowedOrigins = [
+    'https://localhost:3000', // Local development
+    'https://dragons.canby.ca' // Production
+];
 
-// Set up CORS to allow requests from your local development environment
 const corsOptions = {
-    origin: 'https://localhost:3000',
+    origin: (origin, callback) => {
+        if (allowedOrigins.includes(origin) || !origin) {
+            // Allow requests with no origin (like mobile apps, curl, etc.)
+            callback(null, true);
+        } else {
+            callback(new Error('Not allowed by CORS'));
+        }
+    },
     optionsSuccessStatus: 200,
     credentials: true
 };
 
 app.use(cors(corsOptions));
+
 
 // Auth0 configuration
 const config = {
