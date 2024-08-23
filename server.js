@@ -649,8 +649,8 @@ const NODE_ENV = process.env.NODE_ENV || 'development';
 
 if (NODE_ENV === 'production') {
     // Production mode: assume Railway or your server handles HTTPS
-    http.createServer(app).listen(PORT, () => {
-        console.log(`Server is running in production mode on http://dragons.canby.ca:${PORT}`);
+    https.createServer(app).listen(PORT, () => {
+        console.log(`Server is running in production mode on https://dragons.canby.ca:${PORT}`);
     });
 } else {
     // Development mode: use self-signed certificates for HTTPS on localhost
