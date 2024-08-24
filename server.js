@@ -24,29 +24,24 @@ const { summarizeLogs } = require('./services/gptService');
 const { getWorldAndRegionDetails, getInitialQuests } = require('./agents/world/storyTeller.js');
 
 
+// MongoDB connection
 mongoose.connect(process.env.MONGO_URL, {
     useNewUrlParser: true,
     useUnifiedTopology: true
-}).then(() => console.log('MongoDB connected'))
-  .catch(err => console.log(err));
+})
+.then(() => console.log('MongoDB connected'))
+.catch(err => console.log('MongoDB connection error:', err));
 
-app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public')));
-app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({ extended: true }));
-// Add this line to serve static files from the /agents/world/factories/mapIcons directory
-app.use('/mapIcons', express.static(path.join(__dirname, 'agents', 'world', 'factories', 'mapIcons')));
-
-// CORS config
+// CORS configuration
 const allowedOrigins = [
-    'https://localhost:3000', // Local development
-    'https://dragons.canby.ca' // Production
+    'https://localhost:3000',
+    'https://dragons.canby.ca',
+    process.env.AUTH0_BASE_URL // Include Auth0 callback URL
 ];
 
 const corsOptions = {
     origin: (origin, callback) => {
         if (allowedOrigins.includes(origin) || !origin) {
-            // Allow requests with no origin (like mobile apps, curl, etc.)
             callback(null, true);
         } else {
             callback(new Error('Not allowed by CORS'));
@@ -56,8 +51,17 @@ const corsOptions = {
     credentials: true
 };
 
+// Apply CORS middleware first
 app.use(cors(corsOptions));
 
+// Other middleware
+app.use(express.json());
+app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({ extended: true }));
+
+// Static file serving
+app.use(express.static(path.join(__dirname, 'public')));
+app.use('/mapIcons', express.static(path.join(__dirname, 'agents', 'world', 'factories', 'mapIcons')));
 
 // Auth0 configuration
 const config = {
@@ -68,12 +72,21 @@ const config = {
     clientID: process.env.AUTH0_CLIENT_ID,
     issuerBaseURL: process.env.AUTH0_ISSUER_BASE_URL,
     authorizationParams: {
-        scope: 'openid profile email' // Ensure correct scopes
+        scope: 'openid profile email'
     }
 };
 
 // Attach Auth0 to the Express application
 app.use(auth(config));
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+    console.error(`${new Date().toISOString()} - Error:`, err);
+    if (err.message === 'Not allowed by CORS') {
+        console.error(`Rejected Origin: ${req.headers.origin}`);
+    }
+    res.status(500).send('An unexpected error occurred');
+});
 
 // Login route
 app.get('/login', (req, res) => {
