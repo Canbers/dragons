@@ -1,6 +1,7 @@
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
+const http = require('http');
 const https = require('https');
 const socketIo = require('socket.io');
 const mongoose = require('mongoose');
@@ -641,16 +642,22 @@ app.post('/api/assign-character', ensureAuthenticated, async (req, res) => {
     } catch (error) {
         res.status(500).send(error.message);
     }
-})
+});
+
+// Add a basic health check endpoint
+app.get('/health', (req, res) => {
+    res.status(200).json({ status: 'OK' });
+});
+
 
 // Environment-specific configuration
 const PORT = process.env.PORT || 3000;
 const NODE_ENV = process.env.NODE_ENV || 'development';
 
 if (NODE_ENV === 'production') {
-    // Production mode: assume Railway or your server handles HTTPS
+    // Production mode: use regular HTTP, Railway handles HTTPS
     http.createServer(app).listen(PORT, () => {
-        console.log(`Server is running in production mode on http://dragons.canby.ca:${PORT}`);
+        console.log(`Server is running in production mode on port ${PORT}`);
     });
 } else {
     // Development mode: use self-signed certificates for HTTPS on localhost
@@ -663,3 +670,4 @@ if (NODE_ENV === 'production') {
         console.log(`Server is running in development mode on https://localhost:${PORT}`);
     });
 }
+
