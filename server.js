@@ -36,7 +36,7 @@ mongoose.connect(process.env.MONGO_URL, {
 const allowedOrigins = [
     'https://localhost:3000',
     'https://dragons.canby.ca',
-    process.env.AUTH0_BASE_URL // Include Auth0 callback URL
+    process.env.AUTH0_ISSUER_BASE_URL // Include Auth0 callback URL
 ];
 
 const corsOptions = {
