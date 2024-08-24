@@ -6,6 +6,11 @@ const Settlement = require('../db/models/Settlement');
 const regionFactory = require('../agents/world/factories/regionsFactory');
 const { prompt } = require('../services/gptService');
 
+// Load environment variables
+require('dotenv').config();
+
+const API_BASE_URL = process.env.API_BASE_URL || 'https://localhost:3000';
+
 const agent = new https.Agent({
     rejectUnauthorized: false // This allows self-signed certificates
 });
@@ -14,7 +19,7 @@ const getRecentMessages = async (plotId, limit = 20, cookies) => {
     if (!plotId) {
         throw new Error('plotId is undefined');
     }
-    const url = `https://localhost:3000/api/game-logs/recent/${plotId}?limit=${limit}`;
+    const url = `${API_BASE_URL}/api/game-logs/recent/${plotId}?limit=${limit}`;
     try {
         const response = await fetch(url, { 
             method: 'GET', 
