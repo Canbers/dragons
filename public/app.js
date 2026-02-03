@@ -28,6 +28,12 @@ document.addEventListener('DOMContentLoaded', () => {
         window.location.href = '/profile';
         return;
     }
+    
+    // Initialize MapViewer
+    if (typeof MapViewer !== 'undefined') {
+        mapViewer = new MapViewer('map-viewer-container', plotId);
+        mapViewer.load();
+    }
 
     const loginBtn = document.getElementById('login-btn');
     const logoutBtn = document.getElementById('logout-btn');
@@ -803,6 +809,11 @@ async function fetchGameInfo(plotId, characterId) {
                 
                 // Refresh game info to update character sheet and state panel
                 fetchGameInfo(plotId, characterId);
+                
+                // Refresh map data
+                if (mapViewer) {
+                    await mapViewer.load();
+                }
             }
         } catch (error) {
             console.error('Error while submitting action:', error);

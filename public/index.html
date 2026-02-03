@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="D&D Style Adventure Game">
     <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="map-styles.css">
     <title>Adventure Game</title>
 </head>
 <body>
@@ -71,8 +72,7 @@
         <!-- Map Section -->
         <div id="map-section">
             <h2>Map</h2>
-            <canvas id="map-canvas"></canvas>
-            <canvas id="overlay-canvas"></canvas>
+            <div id="map-viewer-container"></div>
         </div>
     </div>
 </div>
@@ -149,6 +149,7 @@
 <!-- Toast Notification Container -->
 <div id="toast-container"></div>
 
+<script src="/MapViewer.js"></script>
 <script src="/app.js" type="module"></script>
 </body>
 </html>

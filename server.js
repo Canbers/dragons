@@ -725,6 +725,156 @@ Respond in JSON:
     }
 });
 
+// ========== SEMANTIC MAP API ==========
+
+// Get map data for current location
+app.get('/api/plots/:plotId/map', ensureAuthenticated, async (req, res) => {
+    try {
+        const plot = await Plot.findById(req.params.plotId)
+            .populate('current_state.current_location.region')
+            .populate('current_state.current_location.settlement');
+        
+        if (!plot) {
+            return res.status(404).json({ error: 'Plot not found' });
+        }
+        
+        // Initialize map_data if it doesn't exist
+        if (!plot.current_state.current_location.map_data) {
+            plot.current_state.current_location.map_data = {
+                semantic_coordinates: { x: 0, y: 0, z: 0 },
+                connections: [],
+                points_of_interest: []
+            };
+        }
+        
+        res.json({
+            current: {
+                name: plot.current_state.current_location.locationName,
+                description: plot.current_state.current_location.description,
+                ...plot.current_state.current_location.map_data
+            },
+            region: plot.current_state.current_location.region?.name,
+            settlement: plot.current_state.current_location.settlement?.name
+        });
+    } catch (error) {
+        console.error('Error fetching map data:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Update map data (called after AI provides location updates)
+app.patch('/api/plots/:plotId/map', ensureAuthenticated, async (req, res) => {
+    try {
+        const { connections, pois, coordinates, location_name } = req.body;
+        const plot = await Plot.findById(req.params.plotId);
+        
+        if (!plot) {
+            return res.status(404).json({ error: 'Plot not found' });
+        }
+        
+        // Initialize if needed
+        if (!plot.current_state.current_location.map_data) {
+            plot.current_state.current_location.map_data = {
+                semantic_coordinates: { x: 0, y: 0, z: 0 },
+                connections: [],
+                points_of_interest: []
+            };
+        }
+        
+        // Update location name if moved
+        if (location_name) {
+            plot.current_state.current_location.locationName = location_name;
+        }
+        
+        // Merge new connections (preserve existing discovered ones)
+        if (connections && Array.isArray(connections)) {
+            const existingConnections = plot.current_state.current_location.map_data.connections || [];
+            const mergedConnections = [...existingConnections];
+            
+            connections.forEach(newConn => {
+                const existingIndex = mergedConnections.findIndex(c => c.name === newConn.name);
+                if (existingIndex >= 0) {
+                    // Update existing connection
+                    mergedConnections[existingIndex] = {
+                        ...mergedConnections[existingIndex],
+                        ...newConn
+                    };
+                } else {
+                    // Add new connection
+                    mergedConnections.push(newConn);
+                }
+            });
+            
+            plot.current_state.current_location.map_data.connections = mergedConnections;
+        }
+        
+        // Update POIs
+        if (pois && Array.isArray(pois)) {
+            plot.current_state.current_location.map_data.points_of_interest = pois;
+        }
+        
+        // Update coordinates if provided
+        if (coordinates) {
+            plot.current_state.current_location.map_data.semantic_coordinates = coordinates;
+        }
+        
+        await plot.save();
+        res.json({ updated: true, map_data: plot.current_state.current_location.map_data });
+    } catch (error) {
+        console.error('Error updating map data:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Execute quick action from map (travel, interact with POI, custom)
+app.post('/api/plots/:plotId/quick-action', ensureAuthenticated, async (req, res) => {
+    try {
+        const { actionType, target, customPrompt, poi_id } = req.body;
+        
+        let prompt;
+        switch(actionType) {
+            case 'travel':
+                prompt = customPrompt || `I travel to ${target}`;
+                break;
+            case 'poi-action':
+                prompt = customPrompt; // Pre-built prompt from suggested action
+                break;
+            case 'poi-custom':
+                prompt = `${customPrompt} (interacting with ${target})`;
+                break;
+            case 'location-info':
+                prompt = `Tell me more about ${target}`;
+                break;
+            case 'location-scout':
+                prompt = `I scout ahead toward ${target}`;
+                break;
+            case 'location-custom':
+                prompt = `Regarding ${target}: ${customPrompt}`;
+                break;
+            default:
+                prompt = customPrompt;
+        }
+        
+        // Mark POI as interacted if applicable
+        if (poi_id) {
+            const plot = await Plot.findById(req.params.plotId);
+            const poi = plot.current_state.current_location.map_data.points_of_interest.find(p => p.poi_id === poi_id);
+            if (poi) {
+                poi.interacted = true;
+                poi.last_interaction = prompt;
+                poi.interaction_count = (poi.interaction_count || 0) + 1;
+                await plot.save();
+            }
+        }
+        
+        // Return the prompt to be submitted via the existing chat flow
+        res.json({ prompt });
+    } catch (error) {
+        console.error('Error handling quick action:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // Create a new character
 app.post('/api/characters', ensureAuthenticated, async (req, res) => {
     try {

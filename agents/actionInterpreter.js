@@ -506,6 +506,98 @@ IMPORTANT:
 };
 
 /**
+ * Parse and apply map updates from AI response
+ */
+const processMapUpdate = async (plotId, aiResponse) => {
+    try {
+        // Look for <!--MAP_UPDATE {json} --> in the response
+        const mapUpdateMatch = aiResponse.match(/<!--MAP_UPDATE\s*([\s\S]*?)\s*-->/);
+        if (!mapUpdateMatch) {
+            return null; // No map update in response
+        }
+        
+        const mapData = JSON.parse(mapUpdateMatch[1]);
+        const plot = await Plot.findById(plotId);
+        
+        if (!plot || !plot.current_state.current_location) {
+            return null;
+        }
+        
+        // Initialize map_data if it doesn't exist
+        if (!plot.current_state.current_location.map_data) {
+            plot.current_state.current_location.map_data = {
+                semantic_coordinates: { x: 0, y: 0, z: 0 },
+                connections: [],
+                points_of_interest: []
+            };
+        }
+        
+        const mapDataRef = plot.current_state.current_location.map_data;
+        
+        // Handle location movement
+        if (mapData.moved && mapData.new_location) {
+            plot.current_state.current_location.locationName = mapData.new_location;
+            
+            // Update coordinates if provided
+            if (mapData.coordinates) {
+                mapDataRef.semantic_coordinates = mapData.coordinates;
+            }
+            
+            // Clear POIs when moving (they're location-specific)
+            mapDataRef.points_of_interest = mapData.pois || [];
+            
+            // Reset connections for new location
+            mapDataRef.connections = mapData.connections || [];
+        } else {
+            // Not moving, just updating current location data
+            
+            // Merge new connections
+            if (mapData.new_connections && Array.isArray(mapData.new_connections)) {
+                const existingConnections = mapDataRef.connections || [];
+                mapData.new_connections.forEach(newConn => {
+                    const existingIndex = existingConnections.findIndex(c => c.name === newConn.name);
+                    if (existingIndex >= 0) {
+                        existingConnections[existingIndex] = { ...existingConnections[existingIndex], ...newConn };
+                    } else {
+                        existingConnections.push({ ...newConn, discovered: true });
+                    }
+                });
+                mapDataRef.connections = existingConnections;
+            }
+            
+            // Update or merge POIs
+            if (mapData.new_pois && Array.isArray(mapData.new_pois)) {
+                mapData.new_pois.forEach(newPoi => {
+                    // Generate ID if not provided
+                    if (!newPoi.poi_id) {
+                        newPoi.poi_id = `poi_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+                    }
+                    
+                    const existingIndex = mapDataRef.points_of_interest.findIndex(p => p.name === newPoi.name);
+                    if (existingIndex >= 0) {
+                        // Update existing POI
+                        mapDataRef.points_of_interest[existingIndex] = {
+                            ...mapDataRef.points_of_interest[existingIndex],
+                            ...newPoi
+                        };
+                    } else {
+                        // Add new POI
+                        mapDataRef.points_of_interest.push(newPoi);
+                    }
+                });
+            }
+        }
+        
+        await plot.save();
+        console.log('Map updated:', mapDataRef);
+        return mapDataRef;
+    } catch (error) {
+        console.error('Error processing map update:', error);
+        return null;
+    }
+};
+
+/**
  * Streaming version of interpret - yields text chunks as they come
  */
 const interpretStream = async function* (input, inputType, plotId, cookies) {
@@ -580,11 +672,23 @@ ${historyContext}
         const tone = plot.settings?.tone || 'classic';
         const difficulty = plot.settings?.difficulty || 'casual';
 
+        // Get current map data for context
+        const mapData = plot.current_state.current_location.map_data || {
+            connections: [],
+            points_of_interest: []
+        };
+        const mapContext = `
+LOCATION MAP DATA:
+- Connected locations: ${mapData.connections?.map(c => `${c.direction}: ${c.name}`).join(', ') || 'none discovered'}
+- Points of interest: ${mapData.points_of_interest?.map(p => p.name).join(', ') || 'none'}
+`.trim();
+
         // Build the streaming prompt (simpler, no JSON requirement)
         let streamMessage;
         if (inputType === 'action') {
             streamMessage = `
 ${stateContext}
+${mapContext}
 
 PLAYER ACTION: "${input}"
 
@@ -596,6 +700,19 @@ VARIETY RULES (MANDATORY):
 - Start your response differently than the previous AI responses
 - Focus on what's NEW and what CHANGED
 - Skip atmosphere that's already established — get to the action
+
+LOCATION TRACKING:
+After your response, if the player moved to a new location OR discovered new connections/POIs, output:
+<!--MAP_UPDATE
+{
+  "moved": true/false,
+  "new_location": "Location Name" (if moved),
+  "coordinates": {"x": 5, "y": 3, "z": 0} (optional),
+  "connections": [{"dir": "north", "name": "Plaza", "distance": "adjacent"}] (if moved),
+  "new_connections": [{"dir": "east", "name": "Market"}] (if staying, new discoveries),
+  "new_pois": [{"name": "Merchant", "type": "npc", "icon": "🧑‍💼", "description": "...", "actions": [{"label": "Talk", "prompt": "I greet the merchant", "icon": "💬"}]}]
+}
+-->
 `.trim();
         } else if (inputType === 'speak') {
             streamMessage = `
@@ -637,6 +754,9 @@ Provide helpful GM info. Be CONCISE (2-3 sentences). Focus on what's useful to k
                 stateChangeRequired: true,
                 consequence_level: 'minor' // Default for streaming
             });
+            
+            // Process map updates if present
+            await processMapUpdate(plotId, fullResponse);
         }
 
     } catch (error) {
