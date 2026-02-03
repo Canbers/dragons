@@ -771,17 +771,38 @@ async function fetchGameInfo(plotId, characterId) {
                         if (line.startsWith('data: ')) {
                             try {
                                 const data = JSON.parse(line.slice(6));
+                                
                                 if (data.chunk) {
                                     fullMessage += data.chunk;
                                     streamContainer.textContent = fullMessage;
                                     gameLog.scrollTop = gameLog.scrollHeight;
                                 }
+                                
+                                if (data.mapUpdate) {
+                                    // Receive map update separately - apply it via API
+                                    console.log('[Map Update Received]', data.mapUpdate);
+                                    await fetch(`/api/plots/${plotId}/map`, {
+                                        method: 'PATCH',
+                                        headers: {
+                                            'Content-Type': 'application/json',
+                                            'Authorization': `Bearer ${token}`
+                                        },
+                                        body: JSON.stringify(data.mapUpdate)
+                                    });
+                                    
+                                    // Refresh map viewer immediately
+                                    if (window.mapViewer) {
+                                        await window.mapViewer.load();
+                                    }
+                                }
+                                
                                 if (data.done) {
                                     // Stream complete
                                     streamCursor.style.display = 'none';
                                     timestampEl.style.display = 'inline';
                                     document.getElementById(streamId).classList.remove('streaming');
                                 }
+                                
                                 if (data.error) {
                                     streamContainer.textContent = `Error: ${data.error}`;
                                     streamCursor.style.display = 'none';
@@ -812,10 +833,7 @@ async function fetchGameInfo(plotId, characterId) {
                 // Refresh game info to update character sheet and state panel
                 fetchGameInfo(plotId, characterId);
                 
-                // Refresh map data
-                if (window.mapViewer) {
-                    await window.mapViewer.load();
-                }
+                // Map already refreshed when mapUpdate event received (no need to refresh again)
             }
         } catch (error) {
             console.error('Error while submitting action:', error);

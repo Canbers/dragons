@@ -461,7 +461,14 @@ app.post('/api/input/stream', ensureAuthenticated, async (req, res) => {
         const stream = await actionInterpreter.interpretStream(input, inputType, plotId, cookies);
         
         for await (const chunk of stream) {
-            res.write(`data: ${JSON.stringify({ chunk })}\n\n`);
+            // Check if chunk is a map update object or text chunk
+            if (typeof chunk === 'object' && chunk.mapUpdate) {
+                // Send map data as separate event
+                res.write(`data: ${JSON.stringify({ mapUpdate: chunk.mapUpdate })}\n\n`);
+            } else {
+                // Send text chunk normally
+                res.write(`data: ${JSON.stringify({ chunk })}\n\n`);
+            }
         }
         
         res.write(`data: ${JSON.stringify({ done: true })}\n\n`);

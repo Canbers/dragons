@@ -739,46 +739,41 @@ Provide helpful GM info. Be CONCISE (2-3 sentences). Focus on what's useful to k
 `.trim();
         }
 
-        // Stream the response
+        // Stream the response (no buffering - instant streaming)
         const stream = streamPrompt(GAME_MODEL, streamMessage, { tone, difficulty });
         let fullResponse = '';
-        let buffer = '';
         
         for await (const chunk of stream) {
             fullResponse += chunk;
-            buffer += chunk;
-            
-            // Check if we've hit the start of MAP_UPDATE comment
-            if (buffer.includes('<!--MAP_UPDATE')) {
-                // Stop yielding - buffer the rest
-                continue;
-            }
-            
-            // If no map update marker yet, yield normally
-            if (!buffer.includes('<!--')) {
-                yield chunk;
-                buffer = ''; // Clear buffer since we yielded
-            }
+            yield chunk; // Stream everything immediately
         }
         
-        // After streaming completes, remove MAP_UPDATE from final response if present
+        // After streaming completes, extract and remove MAP_UPDATE
+        const mapUpdateMatch = fullResponse.match(/<!--MAP_UPDATE\s*([\s\S]*?)\s*-->/);
         const cleanResponse = fullResponse.replace(/<!--MAP_UPDATE[\s\S]*?-->/g, '').trim();
         
-        // If there's buffered content that wasn't yielded (before MAP_UPDATE), yield it now
-        if (buffer && !buffer.includes('<!--MAP_UPDATE')) {
-            yield buffer;
+        // Yield map data as separate event (if present)
+        if (mapUpdateMatch) {
+            try {
+                const mapData = JSON.parse(mapUpdateMatch[1]);
+                yield { mapUpdate: mapData }; // Special event type
+            } catch (e) {
+                console.error('Failed to parse map update:', e);
+            }
         }
 
         // Update state after stream finishes
         if (inputType === 'action' || inputType === 'speak') {
             await updateCurrentState(plot, input, { 
-                outcome: cleanResponse, // Use cleaned response for state updates
+                outcome: cleanResponse, // Use cleaned response (without MAP_UPDATE)
                 stateChangeRequired: true,
                 consequence_level: 'minor' // Default for streaming
             });
             
             // Process map updates if present
-            await processMapUpdate(plotId, fullResponse);
+            if (mapUpdateMatch) {
+                await processMapUpdate(plotId, fullResponse);
+            }
         }
 
     } catch (error) {
