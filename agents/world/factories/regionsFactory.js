@@ -106,8 +106,19 @@ Format as JSON:
 
 // New function to describe settlements when a region is explored
 const describeSettlements = async (region_id) => {
+    console.log(`[PARALLEL] Starting parallel settlement description for region ${region_id}...`);
     let settlements = await Settlement.find({ region: region_id });
-    await settlement.describe(settlements.map(settlement => settlement.id));
+    
+    // Only describe settlements that haven't been described yet
+    const undescribedSettlements = settlements.filter(s => !s.described);
+    
+    if (undescribedSettlements.length === 0) {
+        console.log(`[PARALLEL] All settlements already described for region ${region_id}`);
+        return;
+    }
+    
+    console.log(`[PARALLEL] Found ${undescribedSettlements.length} undescribed settlements`);
+    await settlement.describe(undescribedSettlements.map(s => s.id));
 }
 
 const generateAndDescribeRegionMap = async (regionId, ecosystem) => {

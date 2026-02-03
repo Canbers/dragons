@@ -143,41 +143,41 @@ Format as JSON:
 
 // Settlments MUST be an array. If you only want to describe
 // a single settlement then just use an array of one.
-const describe = (settlements) => {
-    return new Promise(async (resolve, reject) => {
-        if(!Array.isArray(settlements)) return reject('Describe only takes arrays');
-        let described_settlements = [];
-        let failThreshold = 10;
-        let failCount = 0;
-        let count = 0;
-        console.log(`There are ${settlements.length} settlements in the starting region`);
-        do {
+const describe = async (settlements) => {
+    if (!Array.isArray(settlements)) {
+        throw new Error('Describe only takes arrays');
+    }
+    
+    console.log(`[PARALLEL] Describing ${settlements.length} settlements in parallel...`);
+    
+    // OPTIMIZATION: Process all settlements in parallel instead of sequential
+    const describePromises = settlements.map(async (settlementId) => {
+        let retries = 10;
+        while (retries > 0) {
             try {
-                let details = await nameAndDescription(settlements[count]);
-                console.log('Parsing settlement details...');
+                let details = await nameAndDescription(settlementId);
+                console.log(`[PARALLEL] Parsing settlement ${settlementId} details...`);
                 let p = JSON.parse(details.content);
-                // let icon = await gpt.createImage({
-                //     prompt: `An RPG videogame style map of the following settlement: ${p.short}`,
-                //     n: 1,
-                //     size: "1024x1024",
-                // });
-                await Settlement.findByIdAndUpdate(settlements[count], {
-                //  image: icon.data[0].url,
+                
+                await Settlement.findByIdAndUpdate(settlementId, {
                     described: true,
                     ...p
                 });
-                count++;
+                
+                console.log(`[PARALLEL] ✓ Settlement ${settlementId} described`);
+                return; // Success, exit retry loop
             } catch (e) {
-                failCount++;
-                if (failCount > failThreshold) {
-                    console.log(`We have failed more than 10 time for settlement ${settlements[count]}. Moving on.`);
-                    failCount = 0;
-                    count++;
+                retries--;
+                if (retries === 0) {
+                    console.error(`[PARALLEL] ✗ Failed to describe settlement ${settlementId} after 10 retries:`, e.message);
                 }
             }
-        } while (count < settlements.length);
-        resolve();
+        }
     });
+    
+    // Wait for all settlements to complete (or fail)
+    await Promise.all(describePromises);
+    console.log(`[PARALLEL] All ${settlements.length} settlements processed`);
 };
 
 module.exports = { create, describe };

@@ -511,7 +511,8 @@ app.post('/api/plot', ensureAuthenticated, async (req, res) => {
         const initialRegion = regions[Math.floor(Math.random() * regions.length)];
         const initialSettlement = initialRegion.settlements.length ? initialRegion.settlements[Math.floor(Math.random() * initialRegion.settlements.length)] : null;
 
-        await describeRegionAndSettlements(initialRegion._id);
+        // OPTIMIZATION: Lazy-load descriptions on first use instead of upfront
+        // await describeRegionAndSettlements(initialRegion._id);
 
         let locationName, locationDescription, coordinates;
 
