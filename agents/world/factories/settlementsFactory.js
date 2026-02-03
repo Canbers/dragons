@@ -111,7 +111,31 @@ const nameAndDescription = (settlement_id) => {
         const terrainTypes = getTerrainTypes(settlement.region, settlement.coordinates);
         console.log("Prompting GPT for Settlement description...");
 
-        let promptResult = await gpt.prompt('gpt-4o-mini', `You are managing a D&D style game in the world of ${settlement.region.world.name}: ${settlement.region.world.description}. The settlement is located in a ${terrainTypes} terrain. Please create a setting for a part of the story which will take place in a ${settlement.size} settlement within the ${settlement.region.name} region. Include the name of the city where the story can take place and the name cannot be ${settlement.region.name}. Also include details about the inhabitants of the city and what kind of political and cultural influences we can expect there. Please format it in JSON as follow: { "name": "<The name of the city>", "description": "<The long, two paragraph description of the setting>", "short": "<A short, two sentence summary of the description>" }`);
+        let promptResult = await gpt.prompt('gpt-5-mini', `Create a ${settlement.size} settlement for an "Indifferent World" RPG.
+
+World: ${settlement.region.world.name} - ${settlement.region.world.description}
+Region: ${settlement.region.name}
+Terrain: ${terrainTypes || 'varied'}
+
+Design a settlement that:
+- Has its own problems and daily concerns (not waiting for a hero)
+- Contains factions or individuals with competing interests
+- Has both opportunities and dangers for visitors
+- Feels lived-in with distinct character
+- Has a name that fits the world (NOT "${settlement.region.name}")
+
+Include:
+- What the settlement is known for (trade, craft, problem, reputation)
+- Who holds power and who resents it
+- What visitors should know (customs, dangers, opportunities)
+- A current tension or issue simmering beneath the surface
+
+Format as JSON:
+{
+  "name": "<Distinctive settlement name>",
+  "description": "<Two paragraphs: first about the place itself, second about the people and current tensions>",
+  "short": "<Two sentences capturing what makes this place memorable>"
+}`);
         
         resolve(promptResult);
     });

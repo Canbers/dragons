@@ -1,19 +1,41 @@
 const fetch = require('node-fetch');
-const https = require('https');
+const http = require('http');
 const Plot = require('../db/models/Plot');
 const Region = require('../db/models/Region');
 const Settlement = require('../db/models/Settlement');
 const regionFactory = require('../agents/world/factories/regionsFactory');
-const { prompt } = require('../services/gptService');
+const { prompt, simplePrompt, streamPrompt, GAME_MODEL } = require('../services/gptService');
 
 // Load environment variables
 require('dotenv').config();
 
-const API_BASE_URL = process.env.API_BASE_URL || 'https://localhost:3000';
+// Use HTTP for local development
+const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:3000';
 
-const agent = new https.Agent({
-    rejectUnauthorized: false // This allows self-signed certificates
-});
+/**
+ * Get context about what time of day means for the world
+ */
+const getTimeContext = (timeOfDay) => {
+    const contexts = {
+        'dawn': 'The world is waking. Shops are closed but early workers stir. Good visibility but few people about.',
+        'morning': 'The day begins. Markets open, people start their business. Good time for commerce and conversation.',
+        'midday': 'Peak activity. Streets are busy, taverns serve lunch. Full visibility.',
+        'afternoon': 'Activity continues. Some shops may close for rest. Shadows begin to lengthen.',
+        'evening': 'Day winds down. Taverns fill up, shops close. Torches and lanterns being lit.',
+        'night': 'Most honest folk are home. Taverns busy but streets quieter. Limited visibility without torchlight. Increased danger.',
+        'midnight': 'Deep night. Only guards, criminals, and the desperate are out. Very limited visibility. High danger.',
+        'day': 'Daylight hours. Normal activity levels.',
+        'dusk': 'Light fading. People heading home. Shadows long and deep.'
+    };
+    
+    const key = timeOfDay.toLowerCase();
+    for (const [pattern, context] of Object.entries(contexts)) {
+        if (key.includes(pattern)) {
+            return context;
+        }
+    }
+    return contexts['day'];
+};
 
 const getRecentMessages = async (plotId, limit = 20, cookies) => {
     if (!plotId) {
@@ -26,8 +48,7 @@ const getRecentMessages = async (plotId, limit = 20, cookies) => {
             headers: { 
                 'Content-Type': 'application/json',
                 'Cookie': cookies 
-            }, 
-            agent 
+            }
         });
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
@@ -53,57 +74,123 @@ const ensureDescription = async (regionId, settlementId) => {
     }
 };
 
+/**
+ * Main interpretation function - The Indifferent World
+ */
 const interpret = async (input, inputType, plotId, cookies) => {
     try {
-        const recentMessages = await getRecentMessages(plotId, 20, cookies);
+        // Get recent messages for context
+        let recentMessages = [];
+        try {
+            recentMessages = await getRecentMessages(plotId, 20, cookies);
+        } catch (e) {
+            console.log('No recent messages found, starting fresh');
+        }
+        
+        // Get plot with populated location data
         let plot = await Plot.findById(plotId)
             .populate('current_state.current_location.region')
             .populate('current_state.current_location.settlement');
 
-        // Ensure region and settlement are described
-        if (plot.current_state.current_location.region._id) {
-            await ensureDescription(plot.current_state.current_location.region._id, plot.current_state.current_location.settlement?._id);
+        if (!plot) {
+            throw new Error('Plot not found');
         }
 
-        const context = recentMessages.map(msg => ({
-            role: msg.author === 'Player' ? 'user' : 'assistant',
-            content: msg.content
-        }));
+        // Ensure region and settlement are described
+        if (plot.current_state?.current_location?.region?._id) {
+            await ensureDescription(
+                plot.current_state.current_location.region._id, 
+                plot.current_state.current_location.settlement?._id
+            );
+        }
 
-        const currentStateContext = `
-            Activity: ${plot.current_state.current_activity || 'unknown'}, 
-            Location: ${plot.current_state.current_location.description || (plot.current_state.current_location.settlement ? plot.current_state.current_location.settlement.name : plot.current_state.current_location.region ? plot.current_state.current_location.region.name : 'unknown')}, 
-            Time: ${plot.current_state.current_time || 'unknown'}, 
-            Conditions: ${plot.current_state.environment_conditions || 'unknown'}, 
-            Mood: ${plot.current_state.mood_tone || 'unknown'}
-        `;
+        // Build context from recent messages
+        const historyContext = recentMessages.length > 0 
+            ? recentMessages.map(msg => `${msg.author}: ${msg.content}`).join('\n')
+            : 'No previous history - this is the start of the adventure.';
 
-        const contextString = `Current State: ${currentStateContext.trim().replace(/\s+/g, ' ')}. Recent Game Log: ${context.map(c => `${c.role}: ${c.content}`).join('\n')}`;
+        // Build current state context
+        const currentState = plot.current_state || {};
+        const locationName = currentState.current_location?.settlement?.name 
+            || currentState.current_location?.region?.name 
+            || 'Unknown location';
+        const locationDesc = currentState.current_location?.description 
+            || currentState.current_location?.settlement?.description 
+            || 'No description available';
+
+        // Build reputation context
+        const reputation = plot.reputation || {};
+        let reputationContext = '';
+        
+        // Add NPC relationships if any
+        if (reputation.npcs?.length > 0) {
+            const relevantNpcs = reputation.npcs.slice(-5); // Last 5 NPCs
+            reputationContext += '\nKNOWN NPCS:\n' + relevantNpcs.map(npc => 
+                `- ${npc.name} (${npc.disposition}): ${npc.lastInteraction || 'No notable interaction'}`
+            ).join('\n');
+        }
+        
+        // Add faction standings if any
+        if (reputation.factions?.length > 0) {
+            reputationContext += '\nFACTION STANDINGS:\n' + reputation.factions.map(f => 
+                `- ${f.name}: ${f.standing > 50 ? 'Friendly' : f.standing < -50 ? 'Hostile' : 'Neutral'} (${f.reason || 'No specific reason'})`
+            ).join('\n');
+        }
+        
+        // Add location reputation if relevant
+        const locationRep = reputation.locations?.find(l => l.name === locationName);
+        if (locationRep) {
+            reputationContext += `\nYOUR REPUTATION HERE: ${locationRep.reputation} - ${locationRep.knownFor || 'Nothing notable'}`;
+        }
+
+        // Time-of-day awareness
+        const timeOfDay = currentState.current_time || 'day';
+        const timeContext = getTimeContext(timeOfDay);
+
+        const stateContext = `
+CURRENT STATE:
+- Activity: ${currentState.current_activity || 'exploring'}
+- Location: ${locationName}
+- Location Details: ${locationDesc}
+- Time: ${timeOfDay}
+- Time Context: ${timeContext}
+- Conditions: ${currentState.environment_conditions || 'Normal'}
+- Mood: ${currentState.mood_tone || 'Neutral'}
+${reputationContext}
+
+RECENT HISTORY:
+${historyContext}
+`.trim();
+
+        // Get player settings (defaults for now, will be configurable)
+        const tone = plot.settings?.tone || 'classic';
+        const difficulty = plot.settings?.difficulty || 'casual';
 
         let response;
         switch (inputType) {
             case 'action':
-                response = await handleAction(input, contextString);
+                response = await handleAction(input, stateContext, { tone, difficulty });
                 break;
-            /* ADD THIS BACK IN WHEN YOU WANT TO HANDLE TRAVLE AGAIN
-                const actionTypeResponse = await actionType(input, context);
-                if (actionTypeResponse.travel) {
-                    response = await handleTravel(input, contextString, plot);
-                } else {
-                    response = await handleAction(input, contextString);
-                }
-                break;
-                */
             case 'speak':
-                response = await handleSay(input, contextString);
+                response = await handleSpeak(input, stateContext, { tone, difficulty }, plotId);
                 break;
             case 'askGM':
-                response = await handleAskGM(input, contextString);
+                response = await handleAskGM(input, stateContext);
                 break;
             default:
-                response = await badInput();
+                response = { outcome: "I don't understand that type of input.", stateChangeRequired: false };
+        }
+        
+        // Random event chance (10% chance after each action)
+        if (Math.random() < 0.10 && inputType === 'action') {
+            const randomEvent = await generateRandomEvent(stateContext, { tone, difficulty });
+            if (randomEvent) {
+                response.outcome += `\n\n${randomEvent.event}`;
+                response.stateChangeRequired = response.stateChangeRequired || randomEvent.stateChangeRequired;
+            }
         }
 
+        // Update state if needed
         if (response.stateChangeRequired) {
             await updateCurrentState(plot, input, response);
         }
@@ -111,219 +198,458 @@ const interpret = async (input, inputType, plotId, cookies) => {
         return { message: response };
     } catch (error) {
         console.error('Error handling input:', error);
-        return { message: "Failed to generate response" };
+        return { message: { outcome: "The world shifts strangely... something went wrong.", error: error.message } };
     }
 };
 
-// Determine if the action involves travel
-/*  VERY PROBLEMATIC ---------- NEED TO FIGURE OUT BETTER METHOD OF TRAVELING
-const actionType = async (input, context) => {
-    const message = `Recent game log: ${context}. Player action: "${input}". Is the player trying to travel a long distance from their current location? Respond with JSON {"travel": boolean}`;
-    try {
-        const response = await prompt("gpt-4o-mini", message);
-        const parsedResponse = JSON.parse(response.content);
-        return parsedResponse;
-    } catch (error) {
-        console.error('Error in actionType:', error);
-        return { travel: false }; // Default to false in case of an error
-    }
-};
-*/
+/**
+ * Handle action input - The player DOES something
+ */
+const handleAction = async (input, context, options = {}) => {
+    const message = `
+${context}
 
-// Handle non-travel actions
-const handleAction = async (input, context) => {
-    const message = `${context}\nPlayer action: "${input}".\nGenerate the result in JSON format: {"success": boolean, "outcome": "result of action", "stateChangeRequired": boolean}. Set "stateChangeRequired" to true only if the result of the action significantly changes the activity, location, time, conditions, or mood.`;
+PLAYER ACTION: "${input}"
+
+Simulate what happens when the player attempts this action. Remember:
+- React to what they ACTUALLY said, not what they probably meant
+- The world responds logically, not helpfully
+- NPCs have their own motivations
+- Consequences are real - success is not guaranteed
+- Include sensory details that ground the scene
+
+If the action is:
+- REASONABLE: Show it happening with realistic results (which may include complications)
+- RISKY: Show the attempt and its consequences
+- STUPID: Show the natural consequences (the world doesn't protect fools)
+- IMPOSSIBLE: The attempt fails in a logical way
+
+Respond in JSON:
+{
+    "success": boolean,
+    "outcome": "Vivid description of what happens (2-4 sentences). Focus on what the player experiences.",
+    "stateChangeRequired": boolean (true if location, activity, time, or conditions changed significantly),
+    "consequence_level": "none|minor|significant|major|catastrophic",
+    "world_state": "Brief note on any changes to the environment or NPC attitudes"
+}
+`.trim();
+
     try {
-        const response = await prompt("gpt-4o-mini", message);
-        const parsedResponse = JSON.parse(response.content);
-        return parsedResponse;
+        const response = await prompt(GAME_MODEL, message, options);
+        return JSON.parse(response.content);
     } catch (error) {
         console.error('Error in handleAction:', error);
-        return { success: false, outcome: "Error handling action", feedback: error.message, stateChangeRequired: false };
+        return { 
+            success: false, 
+            outcome: "Your action falters as reality seems to blur for a moment.", 
+            stateChangeRequired: false,
+            consequence_level: "none"
+        };
     }
 };
 
-// Handle travel actions
-const handleTravel = async (input, context, plot) => {
+/**
+ * Handle speak input - The player SAYS something
+ */
+const handleSpeak = async (input, context, options = {}, plotId = null) => {
+    const message = `
+${context}
+
+PLAYER SAYS: "${input}"
+
+An NPC (or NPCs) present respond to what the player said. Remember:
+- NPCs have their own personalities, goals, and moods
+- They do NOT exist to help the player
+- They respond based on what was ACTUALLY said
+- They can be helpful, indifferent, suspicious, hostile, or confused
+- They don't automatically trust strangers or believe obvious lies
+
+Consider:
+- Who is present and what are their motivations?
+- How would they realistically react to this statement?
+- What is their body language and tone?
+
+Respond in JSON:
+{
+    "response": "The NPC's dialogue and reaction (2-4 sentences). Include their tone and any notable body language.",
+    "npc_name": "Name of the primary NPC responding (create a name if needed)",
+    "npc_attitude_change": "none|warmer|colder|suspicious|hostile|amused",
+    "new_disposition": "hostile|unfriendly|neutral|friendly|allied (only if changed)",
+    "stateChangeRequired": boolean,
+    "world_state": "Any changes to the social situation"
+}
+`.trim();
+
     try {
-        // Check if plot and its properties are defined
-        if (!plot || !plot.current_state || !plot.current_state.current_location) {
-            throw new Error('Plot current state or location is not defined');
+        const response = await prompt(GAME_MODEL, message, options);
+        const parsed = JSON.parse(response.content);
+        
+        // Update NPC reputation if we have a plot and the attitude changed
+        if (plotId && parsed.npc_name && parsed.npc_attitude_change !== 'none') {
+            await updateNpcReputation(plotId, parsed.npc_name, parsed.new_disposition, input);
         }
+        
+        return {
+            success: true,
+            outcome: parsed.response,
+            stateChangeRequired: parsed.stateChangeRequired || false,
+            consequence_level: "none",
+            npc_name: parsed.npc_name
+        };
+    } catch (error) {
+        console.error('Error in handleSpeak:', error);
+        return { 
+            success: true, 
+            outcome: "There's an awkward silence. No one seems to respond.", 
+            stateChangeRequired: false 
+        };
+    }
+};
 
-        // Fetch the current coordinates and region map
-        const currentCoords = plot.current_state.current_location.coordinates;
-        if (!currentCoords) {
-            throw new Error('Current coordinates are not defined');
+/**
+ * Update NPC reputation in the plot
+ */
+const updateNpcReputation = async (plotId, npcName, newDisposition, interaction) => {
+    try {
+        const plot = await Plot.findById(plotId);
+        if (!plot) return;
+        
+        // Initialize reputation if it doesn't exist
+        if (!plot.reputation) {
+            plot.reputation = { npcs: [], factions: [], locations: [] };
         }
-
-        const regionId = plot.current_state.current_location.region;
-        if (!regionId) {
-            throw new Error('Region ID is not defined');
+        if (!plot.reputation.npcs) {
+            plot.reputation.npcs = [];
         }
-
-        const region = await Region.findById(regionId);
-        if (!region) {
-            throw new Error('Region not found');
-        }
-
-        const map = region.map;
-        if (!map) {
-            throw new Error('Region map not found');
-        }
-
-        // Fetch settlements in the region
-        const settlements = await Settlement.find({ region: regionId });
-
-        // Determine the new coordinates based on input direction
-        const newCoords = getNewCoordinates(currentCoords, input);
-        console.log('Current Coordinates:', currentCoords);
-        console.log('New Coordinates:', newCoords);
-
-        // Fetch the tile type at the new coordinates
-        const tileType = map[newCoords[1]] && map[newCoords[1]][newCoords[0]];
-        if (!tileType) {
-            return { success: false, outcome: "Cannot travel in that direction.", stateChangeRequired: false };
-        }
-
-        // Check if the new coordinates overlap with a settlement
-        const settlement = settlements.find(s => 
-            s.coordinates.some(coord => coord[0] === newCoords[0] && coord[1] === newCoords[1])
-        );
-
-        let travelMessage;
-        if (settlement) {
-            // If the player has traveled into a settlement, modify the travel message
-            travelMessage = `Previous Context: ${context}\n The player is now in the settlement of ${settlement.name}. ${settlement.description}. Respond in JSON format: {"success": boolean, "outcome": "result of travel", "newLocation": "description of new location", "stateChangeRequired": true, "newCoords": [${newCoords}]}.`;
+        
+        // Find existing NPC or create new entry
+        const existingNpc = plot.reputation.npcs.find(n => n.name.toLowerCase() === npcName.toLowerCase());
+        
+        if (existingNpc) {
+            if (newDisposition) {
+                existingNpc.disposition = newDisposition;
+            }
+            existingNpc.lastInteraction = interaction.substring(0, 100); // Keep it brief
         } else {
-            // Use the current travel message if the player is not in a settlement
-            travelMessage = `Previous Context: ${context}\n The player has just traveled into a ${tileType} region. Describe the new location the player has traveled to and any interactions they have. Respond in JSON format: {"success": boolean, "outcome": "result of travel", "newLocation": "description of new location", "stateChangeRequired": true, "newCoords": [${newCoords}]}.`;
+            plot.reputation.npcs.push({
+                name: npcName,
+                disposition: newDisposition || 'neutral',
+                lastInteraction: interaction.substring(0, 100),
+                location: plot.current_state?.current_location?.settlement?.name || 'Unknown'
+            });
         }
-
-        // Prompt the AI with the travel context
-        const response = await prompt("gpt-4o-mini", travelMessage);
-        const parsedResponse = JSON.parse(response.content);
-
-        if (parsedResponse.success && parsedResponse.stateChangeRequired) {
-            // Update the character's location and the plot's state with the new location
-            await updateCurrentState(plot, input, parsedResponse);
-        }
-
-        return parsedResponse;
+        
+        await plot.save();
+        console.log(`Updated reputation for NPC: ${npcName}`);
     } catch (error) {
-        console.error('Error in handleTravel:', error);
-        return { success: false, outcome: `Error handling travel: ${error.message}`, stateChangeRequired: false };
+        console.error('Error updating NPC reputation:', error);
     }
 };
 
-
-// Calculate new coordinates based on direction
-const getNewCoordinates = (currentCoords, direction) => {
-    const [x, y] = currentCoords;
-    const lowerDirection = direction.toLowerCase();
-
-    if (lowerDirection.includes('north')) {
-        return [x, y - 1];
-    }
-    if (lowerDirection.includes('south')) {
-        return [x, y + 1];
-    }
-    if (lowerDirection.includes('east')) {
-        return [x + 1, y];
-    }
-    if (lowerDirection.includes('west')) {
-        return [x - 1, y];
-    }
-
-    console.log('direction of travel not confirmed');
-    return currentCoords; // If no valid direction found, return the original coordinates
-};
-
-// Handle player dialogue actions
-const handleSay = async (input, context) => {
-    const message = `Current State: ${context}\nPlayer says: "${input}".\nGenerate a dialogue response for the character in JSON format: {"response": "dialogue response", "stateChangeRequired": boolean}. Set "stateChangeRequired" to true only if the dialogue significantly changes the activity, location, time, conditions, or mood.`;
-    try {
-        const response = await prompt("gpt-4o-mini", message);
-        const parsedResponse = JSON.parse(response.content);
-        return parsedResponse;
-    } catch (error) {
-        console.error('Error in handleSay:', error);
-        return { response: "Error handling speech", stateChangeRequired: false };
-    }
-};
-
-// Handle player questions to the GM
+/**
+ * Handle askGM input - Out of character question
+ */
 const handleAskGM = async (input, context) => {
-    const message = `Current State: ${context}\nPlayer asks: "${input}".\nProvide the GM response in JSON format: {"response": "GM response", "stateChangeRequired": false}.`;
+    const systemContent = `You are a helpful game master answering an out-of-character question. 
+Provide information the player character would reasonably know or observe.
+Don't spoil hidden information or tell them what to do.
+Be helpful but maintain the mystery of the world.`;
+
+    const message = `
+${context}
+
+PLAYER ASKS (out of character): "${input}"
+
+Provide helpful information about:
+- What they can see/hear/smell
+- General knowledge their character would have
+- Options available (without recommending one)
+- Consequences they could reasonably anticipate
+
+Respond in JSON:
+{
+    "response": "Your helpful GM answer (2-4 sentences)",
+    "stateChangeRequired": false
+}
+`.trim();
+
     try {
-        const response = await prompt("gpt-4o-mini", message);
-        const parsedResponse = JSON.parse(response.content);
-        return parsedResponse;
+        const response = await simplePrompt(GAME_MODEL, systemContent, message);
+        const parsed = JSON.parse(response.content);
+        return {
+            success: true,
+            outcome: parsed.response,
+            stateChangeRequired: false,
+            consequence_level: "none"
+        };
     } catch (error) {
         console.error('Error in handleAskGM:', error);
-        return { response: "Error handling GM query", stateChangeRequired: false };
+        return { 
+            success: true, 
+            outcome: "The mysteries of this world remain unclear...", 
+            stateChangeRequired: false 
+        };
     }
 };
 
-// Update the plot's current state
+/**
+ * Generate a random event - the world happening around the player
+ */
+const generateRandomEvent = async (context, options = {}) => {
+    const eventTypes = [
+        'environmental', // Weather changes, natural events
+        'social', // Someone approaches, commotion nearby
+        'discovery', // Notice something interesting
+        'rumor', // Overhear conversation
+        'danger', // Threat appears
+        'opportunity' // Chance for profit or adventure
+    ];
+    
+    const eventType = eventTypes[Math.floor(Math.random() * eventTypes.length)];
+    
+    const message = `
+${context}
+
+Generate a brief ${eventType} random event that happens in the world around the player.
+
+This is NOT a response to player action - it's the world being alive and dynamic.
+
+Guidelines:
+- Keep it brief (1-2 sentences)
+- It should be something the player can choose to engage with or ignore
+- It should fit the current location and time
+- It should feel natural, not forced
+- 50% should be minor (atmosphere), 50% should be actionable
+
+Respond in JSON:
+{
+    "event": "Brief description of what happens or what the player notices",
+    "eventType": "${eventType}",
+    "actionable": boolean (true if player might want to respond),
+    "stateChangeRequired": boolean (true if environment changed)
+}
+`.trim();
+
+    try {
+        const response = await prompt(GAME_MODEL, message, options);
+        return JSON.parse(response.content);
+    } catch (error) {
+        console.error('Error generating random event:', error);
+        return null;
+    }
+};
+
+/**
+ * Update the plot's current state based on action results
+ */
 const updateCurrentState = async (plot, input, result) => {
     try {
-        const newCoords = result.newCoords || plot.current_state.current_location.coordinates;
-        const newLocationDescription = result.newLocation || plot.current_state.current_location.description;
+        const stateUpdateMessage = `
+Based on this action and result, determine any state changes:
 
-        // Fetch the current region and settlements
-        const region = await Region.findById(plot.current_state.current_location.region);
-        const settlements = await Settlement.find({ region: region._id });
+Previous State:
+- Activity: ${plot.current_state?.current_activity || 'exploring'}
+- Time: ${plot.current_state?.current_time || 'Unknown'}
+- Conditions: ${plot.current_state?.environment_conditions || 'Normal'}
+- Mood: ${plot.current_state?.mood_tone || 'Neutral'}
 
-        // Determine if the new coordinates are within any settlement
-        let newSettlement = null;
-        for (const settlement of settlements) {
-            if (settlement.coordinates.some(coord => coord[0] === newCoords[0] && coord[1] === newCoords[1])) {
-                newSettlement = settlement;
-                break;
-            }
-        }
+Action: "${input}"
+Result: ${result.outcome}
+Consequence Level: ${result.consequence_level || 'minor'}
 
-        // Update the current location
-        plot.current_state.current_location = {
-            region: region._id,
-            settlement: newSettlement ? newSettlement._id : null,
-            coordinates: newCoords,
-            description: newSettlement ? newSettlement.description : newLocationDescription
-        };
+Respond in JSON:
+{
+    "activity": "new activity (conversation|exploring|in combat|resting|traveling)",
+    "time": "new time of day if changed (dawn|morning|midday|afternoon|evening|night|midnight)",
+    "conditions": "new environmental conditions if changed",
+    "mood": "new mood/tone if changed",
+    "location_description": "updated location description if changed"
+}
 
-        // Update other state details if provided
-        const currentStateJSON = JSON.stringify(plot.current_state);
-        const contextWithInput = `Current State: ${currentStateJSON}\nPlayer input: "${input}". Result: ${JSON.stringify(result)}`;
-        const stateUpdateMessage = `Based on the following context: ${contextWithInput}, determine the updated current state. Provide a response in JSON format {"activity": "new activity", "location": "new location", "time": "new time", "conditions": "new conditions", "mood": "new mood"}. Possible values for activity: ["conversation", "exploring", "in combat", "resting", "traveling"]. conditions should be generalized things (e.g "raining", "sunny", "hot", "cold").`;
+IMPORTANT:
+- If the player is resting or sleeping "until morning" (or similar), advance time to 'morning'.
+- If they are resting for a short while, advance time to the next logical step (e.g., evening -> night).
+- Only change values that would logically change based on the action.
+`.trim();
+
+        const response = await simplePrompt(GAME_MODEL, 
+            "You determine game state changes based on player actions and their consequences.", 
+            stateUpdateMessage
+        );
+        
+        const stateChanges = JSON.parse(response.content);
+        
+        // Validate and apply changes
         const allowedActivities = ['conversation', 'exploring', 'in combat', 'resting', 'traveling'];
-
-        const aiResponse = await prompt("gpt-4o-mini", stateUpdateMessage);
-        const parsedResponse = JSON.parse(aiResponse.content);
-
-        // Validate and update current activity
-        if (allowedActivities.includes(parsedResponse.activity)) {
-            plot.current_state.current_activity = parsedResponse.activity;
-        } else {
-            console.warn(`Invalid activity received: ${parsedResponse.activity}. Keeping the existing activity.`);
+        
+        if (stateChanges.activity && allowedActivities.includes(stateChanges.activity)) {
+            plot.current_state.current_activity = stateChanges.activity;
+        }
+        if (stateChanges.time) {
+            plot.current_state.current_time = stateChanges.time;
+        }
+        if (stateChanges.conditions) {
+            plot.current_state.environment_conditions = stateChanges.conditions;
+        }
+        if (stateChanges.mood) {
+            plot.current_state.mood_tone = stateChanges.mood;
+        }
+        if (stateChanges.location_description && plot.current_state.current_location) {
+            plot.current_state.current_location.description = stateChanges.location_description;
         }
 
-        plot.current_state.current_location.description = parsedResponse.location || plot.current_state.current_location.description;
-        plot.current_state.current_time = parsedResponse.time || plot.current_state.current_time;
-        plot.current_state.environment_conditions = parsedResponse.conditions || plot.current_state.environment_conditions;
-        plot.current_state.mood_tone = parsedResponse.mood || plot.current_state.mood_tone;
-
-        await plot.save(); // Save updated plot state to the database
-        console.log("Updated current state with new location and other details:", plot.current_state);
+        await plot.save();
+        console.log("Updated current state:", plot.current_state);
     } catch (error) {
         console.error('Error updating current state:', error);
     }
 };
 
+/**
+ * Streaming version of interpret - yields text chunks as they come
+ */
+const interpretStream = async function* (input, inputType, plotId, cookies) {
+    try {
+        // Get recent messages for context
+        let recentMessages = [];
+        try {
+            recentMessages = await getRecentMessages(plotId, 20, cookies);
+        } catch (e) {
+            console.log('No recent messages found, starting fresh');
+        }
+        
+        // Get plot with populated location data
+        let plot = await Plot.findById(plotId)
+            .populate('current_state.current_location.region')
+            .populate('current_state.current_location.settlement');
 
-// Handle invalid actions
-const badInput = async () => {
-    return { response: "Invalid action" };
+        if (!plot) {
+            yield "Error: Plot not found";
+            return;
+        }
+
+        // Ensure region and settlement are described
+        if (plot.current_state?.current_location?.region?._id) {
+            await ensureDescription(
+                plot.current_state.current_location.region._id, 
+                plot.current_state.current_location.settlement?._id
+            );
+        }
+
+        // Build context
+        const historyContext = recentMessages.length > 0 
+            ? recentMessages.map(msg => `${msg.author}: ${msg.content}`).join('\n')
+            : 'No previous history - this is the start of the adventure.';
+
+        const currentState = plot.current_state || {};
+        const locationName = currentState.current_location?.settlement?.name 
+            || currentState.current_location?.region?.name 
+            || 'Unknown location';
+        const locationDesc = currentState.current_location?.description 
+            || currentState.current_location?.settlement?.description 
+            || 'No description available';
+
+        const timeOfDay = currentState.current_time || 'day';
+        const timeContext = getTimeContext(timeOfDay);
+
+        // Build reputation context
+        const reputation = plot.reputation || {};
+        let reputationContext = '';
+        if (reputation.npcs?.length > 0) {
+            const relevantNpcs = reputation.npcs.slice(-5);
+            reputationContext += '\nKNOWN NPCS:\n' + relevantNpcs.map(npc => 
+                `- ${npc.name} (${npc.disposition}): ${npc.lastInteraction || 'No notable interaction'}`
+            ).join('\n');
+        }
+
+        const stateContext = `
+CURRENT STATE:
+- Activity: ${currentState.current_activity || 'exploring'}
+- Location: ${locationName}
+- Location Details: ${locationDesc}
+- Time: ${timeOfDay}
+- Time Context: ${timeContext}
+- Conditions: ${currentState.environment_conditions || 'Normal'}
+- Mood: ${currentState.mood_tone || 'Neutral'}
+${reputationContext}
+
+RECENT HISTORY:
+${historyContext}
+`.trim();
+
+        const tone = plot.settings?.tone || 'classic';
+        const difficulty = plot.settings?.difficulty || 'casual';
+
+        // Build the streaming prompt (simpler, no JSON requirement)
+        let streamMessage;
+        if (inputType === 'action') {
+            streamMessage = `
+${stateContext}
+
+PLAYER ACTION: "${input}"
+
+Describe what happens. Be CONCISE (2-3 sentences max). Focus on the immediate result of THIS action.
+
+VARIETY RULES (MANDATORY):
+- NEVER repeat descriptions from the recent history above
+- If you mentioned smoke, shadows, lamp light, or any sensory detail before — DON'T mention it again
+- Start your response differently than the previous AI responses
+- Focus on what's NEW and what CHANGED
+- Skip atmosphere that's already established — get to the action
+`.trim();
+        } else if (inputType === 'speak') {
+            streamMessage = `
+${stateContext}
+
+PLAYER SAYS: "${input}"
+
+Write the NPC's response. Be CONCISE (2-3 sentences max).
+
+VARIETY RULES (MANDATORY):
+- NEVER use the same mannerisms twice (no repeating "snorts", "grunts", "mutters")
+- Check the recent history — if the NPC did something before, do something DIFFERENT now
+- NPCs can just SPEAK without constant physical descriptions
+- Skip environmental details already established
+- Dialogue can be terse — real people don't explain everything
+`.trim();
+        } else {
+            streamMessage = `
+${stateContext}
+
+PLAYER ASKS (out of character): "${input}"
+
+Provide helpful GM info. Be CONCISE (2-3 sentences). Focus on what's useful to know.
+`.trim();
+        }
+
+        // Stream the response
+        const stream = streamPrompt(GAME_MODEL, streamMessage, { tone, difficulty });
+        let fullResponse = '';
+        for await (const chunk of stream) {
+            fullResponse += chunk;
+            yield chunk;
+        }
+
+        // Update state after stream finishes
+        if (inputType === 'action' || inputType === 'speak') {
+            await updateCurrentState(plot, input, { 
+                outcome: fullResponse, 
+                stateChangeRequired: true,
+                consequence_level: 'minor' // Default for streaming
+            });
+        }
+
+    } catch (error) {
+        console.error('Error in interpretStream:', error);
+        yield `Error: ${error.message}`;
+    }
 };
 
-module.exports = { interpret, handleAction, handleSay, handleAskGM, badInput, handleTravel, getNewCoordinates };
+module.exports = { 
+    interpret, 
+    interpretStream,
+    handleAction, 
+    handleSpeak, 
+    handleAskGM,
+    updateNpcReputation
+};

@@ -1,17 +1,24 @@
+console.log('🐉 Dragons server starting...');
+console.log('  [1/10] Loading express...');
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const https = require('https');
+console.log('  [2/10] Loading socket.io...');
 const socketIo = require('socket.io');
+console.log('  [3/10] Loading mongoose...');
 const mongoose = require('mongoose');
-const { auth } = require('express-openid-connect');
 require('dotenv').config();
+console.log('  [4/10] Auth0 skip:', !!process.env.SKIP_AUTH);
+const auth = process.env.SKIP_AUTH ? null : require('express-openid-connect').auth;
 const bodyParser = require('body-parser');
 const app = express();
 const cors = require('cors');
+console.log('  [5/10] Loading world factories...');
 const { generateWorld } = require('./agents/world/factories/worldFactory');
 const regionFactory = require('./agents/world/factories/regionsFactory.js');
+console.log('  [6/10] Loading models...');
 const Plot = require('./db/models/Plot.js');
 const Quest = require('./db/models/Quest.js');
 const Character = require('./db/models/Character.js');
@@ -26,14 +33,14 @@ const { getWorldAndRegionDetails, getInitialQuests } = require('./agents/world/s
 
 // MongoDB connection
 mongoose.connect(process.env.MONGO_URL, {
-    useNewUrlParser: true,
-    useUnifiedTopology: true
+    serverSelectionTimeoutMS: 5000
 })
 .then(() => console.log('MongoDB connected'))
 .catch(err => console.log('MongoDB connection error:', err));
 
 // CORS configuration
 const allowedOrigins = [
+    'http://localhost:3000',
     'https://localhost:3000',
     'https://dragons.canby.ca',
     process.env.AUTH0_ISSUER_BASE_URL // Include Auth0 callback URL
@@ -63,21 +70,28 @@ app.use(bodyParser.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/mapIcons', express.static(path.join(__dirname, 'agents', 'world', 'factories', 'mapIcons')));
 
-// Auth0 configuration
-const config = {
-    authRequired: false,
-    auth0Logout: true,
-    secret: process.env.AUTH0_SECRET,
-    baseURL: process.env.AUTH0_BASE_URL,
-    clientID: process.env.AUTH0_CLIENT_ID,
-    issuerBaseURL: process.env.AUTH0_ISSUER_BASE_URL,
-    authorizationParams: {
-        scope: 'openid profile email'
-    }
-};
-
-// Attach Auth0 to the Express application
-app.use(auth(config));
+// Auth0 configuration (skipped in local dev with SKIP_AUTH=true)
+if (!process.env.SKIP_AUTH) {
+    const config = {
+        authRequired: false,
+        auth0Logout: true,
+        secret: process.env.AUTH0_SECRET,
+        baseURL: process.env.AUTH0_BASE_URL,
+        clientID: process.env.AUTH0_CLIENT_ID,
+        issuerBaseURL: process.env.AUTH0_ISSUER_BASE_URL,
+        authorizationParams: {
+            scope: 'openid profile email'
+        }
+    };
+    app.use(auth(config));
+} else {
+    console.log('⚠️  SKIP_AUTH enabled - running without Auth0');
+    // Mock req.oidc for routes that expect it
+    app.use((req, res, next) => {
+        req.oidc = { isAuthenticated: () => true, user: { sub: 'dev-user', name: 'Developer' } };
+        next();
+    });
+}
 
 // Error handling middleware
 app.use((err, req, res, next) => {
@@ -410,7 +424,7 @@ app.get('/api/quest-details', ensureAuthenticated, async (req, res) => {
     }
 });
 
-// Interpret User Input
+// Interpret User Input (non-streaming)
 app.post('/api/input', ensureAuthenticated, async (req, res) => {
     try {
         const { input, inputType, plotId } = req.body;
@@ -424,6 +438,37 @@ app.post('/api/input', ensureAuthenticated, async (req, res) => {
         res.json(response);
     } catch (error) {
         res.status(500).send(error.message);
+    }
+});
+
+// Streaming endpoint for real-time AI responses
+app.post('/api/input/stream', ensureAuthenticated, async (req, res) => {
+    try {
+        const { input, inputType, plotId } = req.body;
+        const cookies = req.headers.cookie;
+
+        if (!cookies) {
+            return res.status(401).send('Cookies are missing');
+        }
+
+        // Set headers for SSE
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('Connection', 'keep-alive');
+        res.flushHeaders();
+
+        // Use the streaming interpreter
+        const stream = await actionInterpreter.interpretStream(input, inputType, plotId, cookies);
+        
+        for await (const chunk of stream) {
+            res.write(`data: ${JSON.stringify({ chunk })}\n\n`);
+        }
+        
+        res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+        res.end();
+    } catch (error) {
+        res.write(`data: ${JSON.stringify({ error: error.message })}\n\n`);
+        res.end();
     }
 });
 
@@ -531,6 +576,152 @@ app.put('/api/plots/:plotId', ensureAuthenticated, async (req, res) => {
         res.sendStatus(200);
     } catch (error) {
         res.sendStatus(500);
+    }
+});
+
+// Update plot settings (tone/difficulty)
+app.put('/api/plots/:plotId/settings', ensureAuthenticated, async (req, res) => {
+    const { plotId } = req.params;
+    const { tone, difficulty } = req.body;
+    
+    // Validate inputs
+    const validTones = ['dark', 'classic', 'whimsical'];
+    const validDifficulties = ['casual', 'hardcore'];
+    
+    if (tone && !validTones.includes(tone)) {
+        return res.status(400).json({ error: `Invalid tone. Must be one of: ${validTones.join(', ')}` });
+    }
+    if (difficulty && !validDifficulties.includes(difficulty)) {
+        return res.status(400).json({ error: `Invalid difficulty. Must be one of: ${validDifficulties.join(', ')}` });
+    }
+    
+    try {
+        const plot = await Plot.findById(plotId);
+        if (!plot) {
+            return res.status(404).json({ error: 'Plot not found' });
+        }
+        
+        // Initialize settings if they don't exist
+        if (!plot.settings) {
+            plot.settings = { tone: 'classic', difficulty: 'casual' };
+        }
+        
+        // Update only provided fields
+        if (tone) plot.settings.tone = tone;
+        if (difficulty) plot.settings.difficulty = difficulty;
+        
+        await plot.save();
+        res.json({ 
+            message: 'Settings updated', 
+            settings: plot.settings 
+        });
+    } catch (error) {
+        console.error('Error updating settings:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Get plot settings
+app.get('/api/plots/:plotId/settings', ensureAuthenticated, async (req, res) => {
+    const { plotId } = req.params;
+    try {
+        const plot = await Plot.findById(plotId);
+        if (!plot) {
+            return res.status(404).json({ error: 'Plot not found' });
+        }
+        res.json(plot.settings || { tone: 'classic', difficulty: 'casual' });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Get plot reputation
+app.get('/api/plots/:plotId/reputation', ensureAuthenticated, async (req, res) => {
+    const { plotId } = req.params;
+    try {
+        const plot = await Plot.findById(plotId);
+        if (!plot) {
+            return res.status(404).json({ error: 'Plot not found' });
+        }
+        res.json(plot.reputation || { npcs: [], factions: [], locations: [] });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Get world changes caused by player
+app.get('/api/plots/:plotId/world-changes', ensureAuthenticated, async (req, res) => {
+    const { plotId } = req.params;
+    try {
+        const plot = await Plot.findById(plotId);
+        if (!plot) {
+            return res.status(404).json({ error: 'Plot not found' });
+        }
+        res.json(plot.worldChanges || []);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Generate AI story summary
+app.get('/api/plots/:plotId/story-summary', ensureAuthenticated, async (req, res) => {
+    const { plotId } = req.params;
+    try {
+        const plot = await Plot.findById(plotId)
+            .populate('world')
+            .populate('current_state.current_location.region')
+            .populate('current_state.current_location.settlement');
+        
+        if (!plot) {
+            return res.status(404).json({ error: 'Plot not found' });
+        }
+
+        // Get recent game logs
+        const GameLog = require('./db/models/GameLog');
+        const logs = await GameLog.find({ plotId: plotId })
+            .sort({ _id: -1 })
+            .limit(5); // Get last few log documents
+
+        if (logs.length === 0 || (logs.length === 1 && logs[0].messages.length === 0)) {
+            return res.json({ 
+                summary: "Your adventure has just begun. The world awaits your first actions.",
+                keyEvents: []
+            });
+        }
+
+        // Build context for summary - flat map all messages from logs
+        const allMessages = logs.reverse().flatMap(log => log.messages);
+        const logText = allMessages.map(l => `${l.author}: ${l.content}`).join('\n');
+        const worldName = plot.world?.name || 'Unknown World';
+        const locationName = plot.current_state?.current_location?.settlement?.name || 
+                            plot.current_state?.current_location?.region?.name || 'Unknown';
+
+        // Use GPT to generate summary
+        const gpt = require('./services/gptService');
+        const summaryPrompt = `Summarize this adventure in 3-4 sentences. Focus on key events, decisions, and their consequences. Write it as a story recap, in past tense.
+
+World: ${worldName}
+Current Location: ${locationName}
+
+Recent Events:
+${logText}
+
+Respond in JSON:
+{
+    "summary": "Your narrative summary here",
+    "keyEvents": ["Event 1", "Event 2", "Event 3"]
+}`;
+
+        const response = await gpt.simplePrompt('gpt-5-mini', 
+            'You write concise story summaries for RPG adventures.',
+            summaryPrompt
+        );
+
+        const result = JSON.parse(response.content);
+        res.json(result);
+    } catch (error) {
+        console.error('Error generating story summary:', error);
+        res.status(500).json({ error: error.message });
     }
 });
 

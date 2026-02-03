@@ -92,7 +92,60 @@ const Plot = new Schema(
                 type: mongoose.Schema.Types.ObjectId,
                 ref: 'GameLog'
             }
-        ]
+        ],
+        settings: {
+            tone: {
+                type: String,
+                enum: ['dark', 'classic', 'whimsical'],
+                default: 'classic'
+            },
+            difficulty: {
+                type: String,
+                enum: ['casual', 'hardcore'],
+                default: 'casual'
+            }
+        },
+        // Reputation system - tracks how NPCs/factions view the player
+        reputation: {
+            // Named NPCs the player has interacted with
+            npcs: [{
+                name: String,
+                disposition: {
+                    type: String,
+                    enum: ['hostile', 'unfriendly', 'neutral', 'friendly', 'allied'],
+                    default: 'neutral'
+                },
+                lastInteraction: String, // Brief note of what happened
+                location: String // Where they met
+            }],
+            // Faction standings
+            factions: [{
+                name: String,
+                standing: {
+                    type: Number,
+                    default: 0, // -100 to 100 scale
+                    min: -100,
+                    max: 100
+                },
+                reason: String // Why they feel this way
+            }],
+            // General reputation in locations
+            locations: [{
+                name: String,
+                reputation: {
+                    type: String,
+                    enum: ['notorious', 'disliked', 'unknown', 'known', 'respected', 'legendary'],
+                    default: 'unknown'
+                },
+                knownFor: String // What are they known for here
+            }]
+        },
+        // World state changes caused by player actions
+        worldChanges: [{
+            description: String,
+            causedBy: String, // What action caused this
+            timestamp: { type: Date, default: Date.now }
+        }]
     }
 );
 

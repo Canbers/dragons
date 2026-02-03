@@ -26,18 +26,26 @@
     <!-- Character Sheet Section -->
     <div id="character-sheet">
         <h2>Character Sheet</h2>
-        <!-- Character details will be populated here -->
         <div id="character-details" style="display: none;"></div>
     </div>
 
     <!-- Chat Section -->
     <div id="chat-section">
-        <h2>Game Log</h2>
+        <div id="chat-header">
+            <h2>Game Log</h2>
+            <span id="time-display">⏰ --</span>
+        </div>
         <div id="game-log"></div>
         <div id="input-selector">
             <label><input type="radio" name="inputType" value="action" checked> Action</label>
             <label><input type="radio" name="inputType" value="speak"> Speak</label>
             <label><input type="radio" name="inputType" value="askGM"> Ask GM</label>
+        </div>
+        <div id="quick-actions">
+            <button class="quick-action" data-action="I look around carefully" data-type="action">👀 Look Around</button>
+            <button class="quick-action" data-action="I approach someone nearby and greet them" data-type="speak">💬 Talk to NPC</button>
+            <button class="quick-action" data-action="I check my belongings and inventory" data-type="action">🎒 Check Inventory</button>
+            <button class="quick-action" data-action="I find a safe spot to rest and catch my breath" data-type="action">💤 Rest</button>
         </div>
         <input id="chat-box" type="text" placeholder="Type your message...">
         <button id="submit-btn">Submit</button>
@@ -45,23 +53,19 @@
 
     <!-- Game Info and Map Section -->
     <div id="game-info-map-container">
-        <!-- Game Info Section -->
+        <!-- Game Info Section (content gets replaced by JS) -->
         <div id="game-info">
             <h2>Game Info</h2>
             <p>Game information will be displayed here.</p>
+        </div>
+        
+        <!-- Game Action Buttons (OUTSIDE game-info so they persist) -->
+        <div id="game-buttons">
             <button id="start-game-btn">Start Game</button>
-            <button id="view-quests-btn">View Quests</button>
-
-            <!-- Modal Structure -->
-            <div id="quests-modal" class="modal" style="display: none;">
-                <div class="modal-content">
-                    <span class="close">&times;</span>
-                    <h3>Quests</h3>
-                    <div id="quests-table-container">
-                    <!-- Quests table will be populated here -->
-                    </div>
-                </div>
-            </div>
+            <button id="view-quests-btn">📜 View Quests</button>
+            <button id="reputation-btn">🤝 Reputation</button>
+            <button id="story-summary-btn">📖 Story So Far</button>
+            <button id="settings-btn">⚙️ Settings</button>
         </div>
         
         <!-- Map Section -->
@@ -69,17 +73,81 @@
             <h2>Map</h2>
             <canvas id="map-canvas"></canvas>
             <canvas id="overlay-canvas"></canvas>
-          </div>
+        </div>
     </div>
-    <!-- Settlement Details Modal -->
-    <div id="settlement-modal" class="modal" style="display: none;">
+</div>
+
+<!-- ========== MODALS (outside main-container) ========== -->
+
+<!-- Settings Modal -->
+<div id="settings-modal" class="modal" style="display: none;">
+    <div class="modal-content">
+        <span class="close" id="close-settings-modal">&times;</span>
+        <h3>⚙️ Game Settings</h3>
+        <div class="settings-section">
+            <label for="tone-select"><strong>World Tone:</strong></label>
+            <select id="tone-select">
+                <option value="classic">Classic Fantasy</option>
+                <option value="dark">Dark & Gritty</option>
+                <option value="whimsical">Whimsical</option>
+            </select>
+            <p class="setting-description" id="tone-description">A world of adventure and wonder, with danger and consequence.</p>
+        </div>
+        <div class="settings-section">
+            <label for="difficulty-select"><strong>Difficulty:</strong></label>
+            <select id="difficulty-select">
+                <option value="casual">Casual</option>
+                <option value="hardcore">Hardcore</option>
+            </select>
+            <p class="setting-description" id="difficulty-description">Failures result in setbacks, but rarely death.</p>
+        </div>
+        <button id="save-settings-btn">Save Settings</button>
+    </div>
+</div>
+
+<!-- Quests Modal -->
+<div id="quests-modal" class="modal" style="display: none;">
+    <div class="modal-content">
+        <span class="close" id="close-quests-modal">&times;</span>
+        <h3>📜 Quests</h3>
+        <div id="quests-table-container">
+            <!-- Quests table will be populated here -->
+        </div>
+    </div>
+</div>
+
+<!-- Reputation Modal -->
+<div id="reputation-modal" class="modal" style="display: none;">
+    <div class="modal-content">
+        <span class="close" id="close-reputation-modal">&times;</span>
+        <h3>🤝 Reputation</h3>
+        <div id="reputation-content">
+            <div class="reputation-section">
+                <h4>Known NPCs</h4>
+                <div id="reputation-npcs">Loading...</div>
+            </div>
+            <div class="reputation-section">
+                <h4>Faction Standing</h4>
+                <div id="reputation-factions">Loading...</div>
+            </div>
+            <div class="reputation-section">
+                <h4>Local Reputation</h4>
+                <div id="reputation-locations">Loading...</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Settlement Details Modal -->
+<div id="settlement-modal" class="modal" style="display: none;">
     <div class="modal-content">
         <span class="close" id="close-settlement-modal">&times;</span>
         <div id="settlement-details"></div>
     </div>
 </div>
 
-</div>
+<!-- Toast Notification Container -->
+<div id="toast-container"></div>
 
 <script src="/app.js" type="module"></script>
 </body>

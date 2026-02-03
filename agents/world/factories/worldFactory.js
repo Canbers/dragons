@@ -6,9 +6,20 @@ const vectorService = require('../../../services/vectorService');
 const { prompt } = require('../../../services/gptService');
 
 async function generateWorld(worldName) {
-    const worldMessage = `Generate a unique description for a tabletop RPG fantasy world: ${worldName}. Respond in JSON with the format: {'description': 'description'}.`;
+    const worldMessage = `Generate a unique description for an "Indifferent World" fantasy setting called "${worldName}".
 
-    let worldResponse = await prompt("gpt-4o-mini", worldMessage);
+This is a world that:
+- Exists independently of any "chosen one" or hero
+- Has ongoing conflicts, power struggles, and problems
+- Contains factions with competing interests
+- Rewards clever players and punishes foolish ones
+- Feels lived-in, with history and consequence
+
+Create a 2-3 sentence evocative description that hints at the world's character without spelling everything out.
+
+Respond in JSON: {"description": "your description"}`;
+
+    let worldResponse = await prompt("gpt-5-mini", worldMessage);
 
     let worldDescription = JSON.parse(worldResponse.content).description;
 

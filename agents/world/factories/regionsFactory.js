@@ -62,7 +62,23 @@ const describe = async (region_id) => {
             while (retries > 0) {
                 attempt++;
                 try {
-                    let promptResult = await gpt.prompt('gpt-4o-mini', `You are creating a region within the Dungeons & Dragons style world ${region.world.name}: ${region.world.description}. Please create a name and description for a region within this world which is located in the ${region.ecosystem.name}. Please format it in JSON as follow: { "name": "<The name of the region>", "description": "<The long, two paragraph description of the region>", "short": "<A short, two sentence summary of the description>"}`);
+                    let promptResult = await gpt.prompt('gpt-5-mini', `Create a region for the world "${region.world.name}": ${region.world.description}
+
+This region is a ${region.ecosystem.name} area. Design it as part of an "Indifferent World" - a place that exists with its own history, conflicts, and daily life regardless of any hero.
+
+Include:
+- A distinctive, evocative name
+- Hints at local power dynamics or tensions
+- Details that suggest ongoing life (trade routes, local customs, recent events)
+- Something dangerous or problematic about the region
+- Something valuable or desirable about it
+
+Format as JSON:
+{
+  "name": "<Evocative region name>",
+  "description": "<Two paragraphs: first about the land itself, second about the people/conflicts/opportunities>",
+  "short": "<Two sentences capturing the essence>"
+}`);
                     let p = JSON.parse(promptResult.content);
 
                     await Region.findByIdAndUpdate(region_id, { described: true, ...p });

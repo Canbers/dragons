@@ -1,0 +1,33 @@
+services:
+  - type: web
+    name: dragons
+    runtime: node
+    region: oregon
+    plan: free
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: API_BASE_URL
+        value: https://dragons.canby.ca
+      - key: AUTH0_BASE_URL
+        value: https://dragons.canby.ca/
+      - key: AUTH0_CLIENT_ID
+        value: iB0eJ0fR8Epm998FGee1oOkOLnkRuS8G
+      - key: AUTH0_ISSUER_BASE_URL
+        value: https://dev-p2sfrp7y1sd5qzn8.us.auth0.com
+      - key: AUTH0_SECRET
+        sync: false  # Set manually in Render dashboard (secret)
+      - key: DRAGONS_PROJECT
+        value: proj_rGHHWz0pmWZLkMKMWDZvhJok
+      - key: MONGO_URL
+        sync: false  # Set manually in Render dashboard (secret)
+      - key: OPENAI_API_KEY
+        sync: false  # Set manually in Render dashboard (secret)
+      - key: OPENAI_ORG_ID
+        value: org-0ovBa9zPgFJUMMsFWja7tUCN
+      - key: GAME_MODEL
+        value: gpt-4o-mini
+    healthCheckPath: /
+    autoDeploy: true

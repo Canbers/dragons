@@ -35,46 +35,54 @@ const questBuilder = async (questId) => {
         }
 
         const prompt = `
-            You are a tabletop RPG game master. Create a detailed quest based on the following information:
-            Title: ${questTitle}
-            Description: ${description}
-            Region: ${regionName} - ${regionDescription}
-            Settlement: ${primaryLocation} - ${settlementDescription}
-            
-            Generate a JSON object with the following structure:
+            You are designing a quest for an "Indifferent World" RPG - a world that exists independently of the player, where actions have real consequences.
+
+            Quest Context:
+            - Title: ${questTitle}
+            - Description: ${description}
+            - Region: ${regionName} - ${regionDescription}
+            - Settlement: ${primaryLocation} - ${settlementDescription}
+
+            Design Philosophy:
+            - The quest exists because NPCs have their own problems, not to serve the player
+            - Multiple valid approaches exist (help, hinder, ignore, exploit)
+            - Outcomes affect the world whether the player participates or not
+            - NPCs have their own motivations that may conflict
+            - "Good" choices may have bad consequences; "bad" choices may have good ones
+
+            Generate a JSON object:
             {
                 "questTitle": "${questTitle}", 
                 "description": "${description}",
                 "triggers": {
-                    "conditions": ["<Trigger condition 1>", "<Trigger condition 2>"]
+                    "conditions": ["<How does the player learn of this?>", "<What draws attention to this problem?>"]
                 },
                 "keyActors": {
                     "primary": [
-                        { "name": "<Primary actor 1>", "role": "<Role of primary actor 1>" },
-                        { "name": "<Primary actor 2>", "role": "<Role of primary actor 2>" }
+                        { "name": "<NPC name>", "role": "<Their stake in this>", "motivation": "<What they really want>" }
                     ],
                     "secondary": [
-                        { "name": "<Secondary actor 1>", "role": "<Role of secondary actor 1>" },
-                        { "name": "<Secondary actor 2>", "role": "<Role of secondary actor 2>" }
+                        { "name": "<NPC name>", "role": "<Their involvement>", "motivation": "<Their angle>" }
                     ]
                 },
                 "locations": {
-                    "primary": "<Primary location>",
-                    "secondary": ["<Secondary location 1>", "<Secondary location 2>"]
+                    "primary": "<Where the main action happens>",
+                    "secondary": ["<Related location>", "<Another related location>"]
                 },
                 "outcomes": [
-                    { "type": "A", "description": "<Description of outcome A>" },
-                    { "type": "B", "description": "<Description of outcome B>" },
-                    { "type": "C", "description": "<Description of outcome C>" }
+                    { "type": "help_succeed", "description": "<If player helps and succeeds>" },
+                    { "type": "help_fail", "description": "<If player helps but fails>" },
+                    { "type": "ignore", "description": "<If player does nothing - quest resolves without them>" },
+                    { "type": "exploit", "description": "<If player uses the situation for personal gain>" }
                 ],
                 "consequences": {
-                    "immediate": "<Immediate consequence>",
-                    "longTerm": "<Long-term consequence>"
+                    "immediate": "<What changes right after resolution>",
+                    "longTerm": "<How the world remembers this>"
                 }
             }
         `;
         
-        const promptResult = await gpt.prompt('gpt-4o-mini', prompt);
+        const promptResult = await gpt.prompt('gpt-5-mini', prompt);
         const detailedQuest = JSON.parse(promptResult.content);
 
         // Update the quest with the detailed information
@@ -122,11 +130,26 @@ const storyOptions = async (plotId) => {
         const settlementDescription = settlement.description;
 
         console.log('Prompting GPT for 3 quests...');
-        const promptResult = await gpt.prompt('gpt-4o-mini', `
-            You are a tabletop RPG game master. The players are starting a new game in the world of ${world.name}. Specifically in the region ${regionName}: ${regionDescription}.
-            Please generate three possible initial quests that could only happen in the settlement ${settlementName}: ${settlementDescription}. 
-            Please format it in a JSON array with each JSON object structured as follows: 
-            { "questTitle": "<Title of quest>", "description": "<The 3 to 5 sentence description of the quest>" }
+        const promptResult = await gpt.prompt('gpt-5-mini', `
+            You are generating quest hooks for an "Indifferent World" RPG - a living world where things happen whether the player gets involved or not.
+
+            Setting:
+            - World: ${world.name}
+            - Region: ${regionName} - ${regionDescription}
+            - Settlement: ${settlementName} - ${settlementDescription}
+
+            Generate 3 quest hooks that:
+            1. Arise from local problems, conflicts, or opportunities that exist independently
+            2. Have multiple possible approaches (not just "hero saves the day")
+            3. Will resolve themselves (possibly badly) if the player ignores them
+            4. Involve NPCs with their own agendas and motivations
+
+            Avoid: chosen one narratives, world-ending threats, obvious good vs evil
+
+            Format as JSON array:
+            [
+                { "questTitle": "<Short evocative title>", "description": "<2-3 sentences describing the situation, not the solution>" }
+            ]
         `);
 
         const quests = JSON.parse(promptResult.content);
@@ -159,8 +182,8 @@ const createQuestInCurrentSettlement = async (region_id, settlement_id) => {
             throw new Error('Region or Settlement not found.');
         }
 
-        // Generate quests (this is just an example, adjust as needed)
-        let promptResult = await gpt.prompt('gpt-4o-mini', `Generate a quest for the settlement ${settlement.name} in the region ${region.name}.`);
+        // Generate quests using Indifferent World philosophy
+        let promptResult = await gpt.prompt('gpt-5-mini', `Generate a quest hook for ${settlement.name} in ${region.name}. The quest should arise from local problems or conflicts, have multiple approaches, and will resolve itself if ignored. Format: { "questTitle": "<title>", "description": "<2-3 sentences>" }`);
         let quests = JSON.parse(promptResult.content);
 
         // Save initial quest stubs to the database

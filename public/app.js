@@ -1,6 +1,21 @@
 import { setupAuthUI } from './auth.js';
 let plotId = null;
 let isLoadingOlderLogs = false;
+let currentRegionId = null; // Track current region for resize handler
+
+// Toast notification helper
+function showToast(message, type = 'info') {
+    const container = document.getElementById('toast-container');
+    if (!container) return;
+    
+    const toast = document.createElement('div');
+    toast.className = `toast ${type}`;
+    toast.textContent = message;
+    container.appendChild(toast);
+    
+    // Remove after animation
+    setTimeout(() => toast.remove(), 3000);
+}
 
 document.addEventListener('DOMContentLoaded', () => {
     setupAuthUI();
@@ -393,6 +408,7 @@ async function fetchGameInfo(plotId, characterId) {
             fetchWorldDetails(plot.world._id);  // Fetch world details using the world ID from the plot
             if (plot.current_state.current_location.region) {
                 const regionId = plot.current_state.current_location.region._id || plot.current_state.current_location.region;  // Extract the region ID
+                currentRegionId = regionId; // Store for resize handler
                 const region = await fetchRegionDetails(regionId);  // Fetch region details using the region ID from the current location
                 const settlements = await fetchSettlementsByRegionId(regionId); // Fetch settlements
                 const playerLocation = plot.current_state.current_location.coordinates; // Player location
@@ -437,35 +453,115 @@ async function fetchGameInfo(plotId, characterId) {
     const currentConditions = currentState.environment_conditions || 'Unknown';
     const currentMood = currentState.mood_tone || 'Unknown';
 
+    // Activity icons
+    const activityIcons = {
+        'exploring': '🧭',
+        'conversation': '💬',
+        'in combat': '⚔️',
+        'resting': '💤',
+        'traveling': '🚶'
+    };
+    
+    // Time icons
+    const timeIcons = {
+        'morning': '🌅',
+        'day': '☀️',
+        'afternoon': '🌤️',
+        'evening': '🌆',
+        'night': '🌙',
+        'midnight': '🌑'
+    };
+    
+    // Condition icons
+    const conditionIcons = {
+        'sunny': '☀️',
+        'raining': '🌧️',
+        'stormy': '⛈️',
+        'cloudy': '☁️',
+        'foggy': '🌫️',
+        'snowing': '❄️',
+        'hot': '🔥',
+        'cold': '🥶',
+        'dark': '🌑'
+    };
+    
+    const getIcon = (value, iconMap, defaultIcon = '❓') => {
+        if (!value) return defaultIcon;
+        const key = Object.keys(iconMap).find(k => value.toLowerCase().includes(k));
+        return key ? iconMap[key] : defaultIcon;
+    };
+
+    // Update prominent time display in chat header
+    const timeDisplay = document.getElementById('time-display');
+    if (timeDisplay) {
+        timeDisplay.textContent = `${getIcon(currentTime, timeIcons, '⏰')} ${currentTime || 'Unknown'}`;
+    }
+
     document.getElementById('game-info').innerHTML = `
         <h2>Current State</h2>
-        <div class="section-content">
-            <p><strong>Activity:</strong> ${currentActivity}</p>
-            <p><strong>Location:</strong> ${currentLocation}</p>
-            <p><strong>Location Description:</strong> ${currentLocationDescription}</p>
-            <p><strong>Time:</strong> ${currentTime}</p>
-            <p><strong>Conditions:</strong> ${currentConditions}</p>
-            <p><strong>Mood:</strong> ${currentMood}</p>
+        <div class="state-grid">
+            <div class="state-item">
+                <span class="state-icon">${activityIcons[currentActivity] || '🧭'}</span>
+                <span class="state-label">Activity</span>
+                <span class="state-value">${currentActivity}</span>
+            </div>
+            <div class="state-item">
+                <span class="state-icon">${getIcon(currentTime, timeIcons, '⏰')}</span>
+                <span class="state-label">Time</span>
+                <span class="state-value">${currentTime}</span>
+            </div>
+            <div class="state-item">
+                <span class="state-icon">${getIcon(currentConditions, conditionIcons, '🌤️')}</span>
+                <span class="state-label">Conditions</span>
+                <span class="state-value">${currentConditions}</span>
+            </div>
+        </div>
+        <div class="location-box">
+            <h3>📍 ${currentLocation}</h3>
+            <p>${currentLocationDescription}</p>
         </div>
     `;
 
 
         // Display character information in the UI
+        const healthPercent = Math.min(100, Math.max(0, character.currentStatus.health));
+        const manaPercent = Math.min(100, Math.max(0, character.currentStatus.mana));
+        const healthColor = healthPercent > 60 ? '#4CAF50' : healthPercent > 30 ? '#ff9800' : '#f44336';
+        
         document.getElementById('character-details').innerHTML = `
             <h3>Character Details</h3>
             <div class="section-content">
-                <p>Name: ${character.name}</p>
-                <p>Age: ${character.age}</p>
-                <p>Race: ${character.race}</p>
-                <p>Class: ${character.class}</p>
-                <p>Stats: Strength ${character.stats.strength}, Intelligence ${character.stats.intelligence}, Agility ${character.stats.agility}</p>
-                <p>Health: ${character.currentStatus.health}</p>
-                <p>Mana: ${character.currentStatus.mana}</p>
-                <p>Origin: ${character.originLocation ? character.originLocation.name : 'Unknown'}</p>
+                <p><strong>${character.name}</strong></p>
+                <p>${character.race} ${character.class}, Age ${character.age}</p>
+                
+                <div class="stat-bars">
+                    <div class="stat-bar-container">
+                        <span class="stat-label">❤️ Health</span>
+                        <div class="stat-bar">
+                            <div class="stat-bar-fill health" style="width: ${healthPercent}%; background-color: ${healthColor};"></div>
+                        </div>
+                        <span class="stat-value">${character.currentStatus.health}</span>
+                    </div>
+                    <div class="stat-bar-container">
+                        <span class="stat-label">💙 Mana</span>
+                        <div class="stat-bar">
+                            <div class="stat-bar-fill mana" style="width: ${manaPercent}%;"></div>
+                        </div>
+                        <span class="stat-value">${character.currentStatus.mana}</span>
+                    </div>
+                </div>
+                
+                <div class="stats-grid">
+                    <div class="stat-item">💪 STR<br><strong>${character.stats.strength}</strong></div>
+                    <div class="stat-item">🧠 INT<br><strong>${character.stats.intelligence}</strong></div>
+                    <div class="stat-item">⚡ AGI<br><strong>${character.stats.agility}</strong></div>
+                </div>
             </div>
             <h3>Inventory:</h3>
-            <div class="section-content">
-                <p>${character.inventory.map(item => `${item.itemName} (x${item.quantity})`).join(', ')}</p>
+            <div class="section-content inventory-list">
+                ${character.inventory.length > 0 
+                    ? character.inventory.map(item => `<span class="inventory-item">🎒 ${item.itemName} (x${item.quantity})</span>`).join('') 
+                    : '<em>Empty</em>'}
             </div>
         `;
         characterDetails.style.display = 'block';
@@ -560,8 +656,10 @@ async function fetchGameInfo(plotId, characterId) {
     closeModal.addEventListener('click', closeModalFunc);
     window.addEventListener('click', outsideClick);
     window.addEventListener('resize', async () => {
-        const settlements = await fetchSettlementsByRegionId(regionId);
-        drawOverlay(settlements, null);  // Pass null for player location if not available
+        if (currentRegionId) {
+            const settlements = await fetchSettlementsByRegionId(currentRegionId);
+            drawOverlay(settlements, null);  // Pass null for player location if not available
+        }
     });
     
 
@@ -574,22 +672,70 @@ async function fetchGameInfo(plotId, characterId) {
 
     submitBtn.addEventListener('click', submitAction);
 
+    // Quick action buttons
+    document.querySelectorAll('.quick-action').forEach(button => {
+        button.addEventListener('click', () => {
+            const action = button.dataset.action;
+            const actionType = button.dataset.type;
+            
+            // Set the input type radio
+            const radioToSelect = document.querySelector(`input[name="inputType"][value="${actionType}"]`);
+            if (radioToSelect) radioToSelect.checked = true;
+            
+            // Set the input text and submit
+            inputField.value = action;
+            submitAction();
+        });
+    });
+
+    let isSubmitting = false; // Track if we're currently submitting
+
     async function submitAction() {
+        if (isSubmitting) return; // Prevent double-submit
+        
         try {
             const inputText = inputField.value.trim();
             const inputType = document.querySelector('input[name="inputType"]:checked').value;
             if (inputText) {
+                // Disable inputs while streaming
+                isSubmitting = true;
+                submitBtn.disabled = true;
+                inputField.disabled = true;
+                submitBtn.textContent = '⏳';
+                document.querySelectorAll('.quick-action').forEach(btn => btn.disabled = true);
+                
                 handlePlayerInput(inputText); // Display player input
+                inputField.value = ''; // Clear input field immediately
+                
+                // Create streaming response container
+                const gameLog = document.getElementById('game-log');
+                const streamId = 'stream-' + Date.now();
+                const timestamp = new Date().toLocaleTimeString();
+                gameLog.innerHTML += `
+                    <div id="${streamId}" class="message ai streaming">
+                        <div class="author">AI:</div>
+                        <div class="systemText">
+                            <span class="stream-content"></span>
+                            <span class="stream-cursor">▌</span>
+                            <span class="timestamp" style="display:none;">${timestamp}</span>
+                        </div>
+                    </div>
+                `;
+                gameLog.scrollTop = gameLog.scrollHeight;
 
                 const token = localStorage.getItem('authToken');
-                const headers = {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`
-                };
+                const streamContainer = document.querySelector(`#${streamId} .stream-content`);
+                const streamCursor = document.querySelector(`#${streamId} .stream-cursor`);
+                const timestampEl = document.querySelector(`#${streamId} .timestamp`);
+                let fullMessage = '';
 
-                const response = await fetch('/api/input', {
+                // Use streaming endpoint
+                const response = await fetch('/api/input/stream', {
                     method: 'POST',
-                    headers: headers,
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
                     body: JSON.stringify({ input: inputText, inputType, plotId })
                 });
 
@@ -601,11 +747,49 @@ async function fetchGameInfo(plotId, characterId) {
                 if (!response.ok) {
                     throw new Error(`HTTP error! status: ${response.status}`);
                 }
-                const data = await response.json();
-                const aiMessage = data.message.outcome || data.message.response || "No response";
-                displayResponse({ message: aiMessage }); // Display AI response
 
-                // Save the game log entry
+                // Read the stream
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+
+                while (true) {
+                    const { value, done } = await reader.read();
+                    if (done) break;
+
+                    const text = decoder.decode(value);
+                    const lines = text.split('\n');
+
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const data = JSON.parse(line.slice(6));
+                                if (data.chunk) {
+                                    fullMessage += data.chunk;
+                                    streamContainer.textContent = fullMessage;
+                                    gameLog.scrollTop = gameLog.scrollHeight;
+                                }
+                                if (data.done) {
+                                    // Stream complete
+                                    streamCursor.style.display = 'none';
+                                    timestampEl.style.display = 'inline';
+                                    document.getElementById(streamId).classList.remove('streaming');
+                                }
+                                if (data.error) {
+                                    streamContainer.textContent = `Error: ${data.error}`;
+                                    streamCursor.style.display = 'none';
+                                }
+                            } catch (e) {
+                                // Ignore parse errors for partial data
+                            }
+                        }
+                    }
+                }
+
+                // Save the game log entries
+                const headers = {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                };
                 await fetch('/api/game-logs', {
                     method: 'POST',
                     headers: headers,
@@ -614,14 +798,23 @@ async function fetchGameInfo(plotId, characterId) {
                 await fetch('/api/game-logs', {
                     method: 'POST',
                     headers: headers,
-                    body: JSON.stringify({ plotId, author: 'AI', content: aiMessage })
+                    body: JSON.stringify({ plotId, author: 'AI', content: fullMessage })
                 });
+                
+                // Refresh game info to update character sheet and state panel
+                fetchGameInfo(plotId, characterId);
             }
         } catch (error) {
             console.error('Error while submitting action:', error);
-            displayResponse({ message: `Error: ${error.message}` }); // Display error in game log
+            displayResponse({ message: `Error: ${error.message}` });
         } finally {
-            inputField.value = ''; // Clear input field
+            // Re-enable inputs after streaming completes (or errors)
+            isSubmitting = false;
+            submitBtn.disabled = false;
+            inputField.disabled = false;
+            submitBtn.textContent = 'Send';
+            document.querySelectorAll('.quick-action').forEach(btn => btn.disabled = false);
+            inputField.focus();
         }
     }
 
@@ -696,35 +889,15 @@ async function fetchGameInfo(plotId, characterId) {
             <div class="message ai">
                 <div class="author">AI:</div>
                 <div class="systemText">
-                    <strong>Welcome to the World of ${data.world.name}</strong><br>
-                    ${data.world.description}
+                    <em>You open your eyes...</em><br><br>
+                    You find yourself in <strong>${data.settlement.name}</strong>, a settlement in the ${data.region.name} region of ${data.world.name}.<br><br>
+                    ${data.settlement.description}<br><br>
+                    <em>What do you do?</em>
                     <span class="timestamp">${new Date().toLocaleTimeString()}</span>
                 </div>
             </div>
         `;
-        const regionDetails = `
-            <div class="message ai">
-                <div class="author">AI:</div>
-                <div class="systemText">
-                    <strong>Region:</strong> ${data.region.name}<br>
-                    <strong>Description:</strong> ${data.region.description}
-                    <span class="timestamp">${new Date().toLocaleTimeString()}</span>
-                </div>
-            </div>
-        `;
-        const settlementDetails = `
-        <div class="message ai">
-            <div class="author">AI:</div>
-            <div class="systemText">
-                You find yourself in the settlement of ${data.settlement.name}<br>
-                 ${data.settlement.description}
-                <span class="timestamp">${new Date().toLocaleTimeString()}</span>
-            </div>
-        </div>
-    `;
         gameLog.innerHTML += worldDetails;
-        gameLog.innerHTML += regionDetails;
-        gameLog.innerHTML += settlementDetails;
         gameLog.scrollTop = gameLog.scrollHeight;
     }
     
@@ -735,19 +908,22 @@ async function fetchGameInfo(plotId, characterId) {
         }
     
         const gameLog = document.getElementById('game-log');
+        
+        // Just mention that there are things happening - don't dump all quest details
         let questsMessage = `
             <div class="message ai">
                 <div class="author">AI:</div>
                 <div class="systemText">
-                    <strong>As you start to explore, you overhear the townspeople discussing multiple problems plaguing the town:</strong><br>`;
-    
+                    As you take in your surroundings, you notice the locals seem preoccupied. Snippets of conversation drift past:<br><br>`;
+        
+        // Just show quest titles as hooks, not full descriptions
         quests.forEach((quest, index) => {
-            questsMessage += `<b>${index + 1}. ${quest.questTitle}</b> - ${quest.description}<br>`;
+            questsMessage += `<em>"...something about ${quest.questTitle.toLowerCase()}..."</em><br>`;
         });
     
         questsMessage += `<br>
-                    You can choose to follow up on these and see if you are able to help, or feel free to ignore their problems and find your own path.<br>
-                    <strong>The world is yours to explore!</strong>
+                    The details are unclear from here. Perhaps talking to the townspeople would reveal more.<br><br>
+                    <strong>The world awaits. What do you do?</strong>
                     <span class="timestamp">${new Date().toLocaleTimeString()}</span>
                 </div>
             </div>
@@ -756,16 +932,10 @@ async function fetchGameInfo(plotId, characterId) {
         gameLog.innerHTML += questsMessage;
         gameLog.scrollTop = gameLog.scrollHeight;
     
-        const returnMessage = `
-            <strong>As you start to explore, you overhear the townspeople discussing multiple problems plaguing the town:</strong><br>`;
-    
-        quests.forEach((quest, index) => {
-            returnMessage += `<b>${index + 1}. ${quest.questTitle}</b> - ${quest.description}<br>`;
-        });
-    
-        returnMessage += `<br>
-            You can choose to follow up on these and see if you are able to help, or feel free to ignore their problems and find your own path.<br>
-            <strong>The world is yours to explore!</strong>`;
+        // Return a concise version for the game log
+        let returnMessage = `You notice the locals seem preoccupied. Snippets of conversation mention: `;
+        returnMessage += quests.map(q => q.questTitle.toLowerCase()).join(', ');
+        returnMessage += `. The details are unclear — perhaps talking to the townspeople would reveal more.`;
     
         return returnMessage;
     }
@@ -861,9 +1031,21 @@ async function fetchGameInfo(plotId, characterId) {
     function displayResponse(response) {
         const gameLog = document.getElementById('game-log');
         const timestamp = new Date().toLocaleTimeString();
+        
+        // Consequence level indicators
+        const consequenceIndicators = {
+            'none': '',
+            'minor': '<span class="consequence minor">⚡</span>',
+            'significant': '<span class="consequence significant">⚠️</span>',
+            'major': '<span class="consequence major">🔥</span>',
+            'catastrophic': '<span class="consequence catastrophic">💀</span>'
+        };
+        
+        const indicator = consequenceIndicators[response.consequence] || '';
+        
         gameLog.innerHTML += `
-          <div class="message ai">
-            <div class="author">AI:</div>
+          <div class="message ai ${response.consequence ? 'consequence-' + response.consequence : ''}">
+            <div class="author">AI: ${indicator}</div>
             <div class="systemText">
             ${response.message}
               <span class="timestamp">${timestamp}</span>
@@ -875,5 +1057,275 @@ async function fetchGameInfo(plotId, characterId) {
 
     // Fetch initial game info and characters
     fetchGameInfo(plotId, characterId);
+
+    // ========== SETTINGS MODAL ==========
+    const settingsBtn = document.getElementById('settings-btn');
+    const settingsModal = document.getElementById('settings-modal');
+    const closeSettingsModal = document.getElementById('close-settings-modal');
+    const saveSettingsBtn = document.getElementById('save-settings-btn');
+    const toneSelect = document.getElementById('tone-select');
+    const difficultySelect = document.getElementById('difficulty-select');
+    const toneDescription = document.getElementById('tone-description');
+    const difficultyDescription = document.getElementById('difficulty-description');
+
+    const toneDescriptions = {
+        'classic': 'A world of adventure and wonder, with danger and consequence.',
+        'dark': 'Harsh and unforgiving. Life is cheap, trust is rare. Violence has real consequences.',
+        'whimsical': 'Strange and often absurd, but internally consistent. Fairy tale rules apply.'
+    };
+
+    const difficultyDescriptions = {
+        'casual': 'Failures result in setbacks, but rarely death. Room to recover from mistakes.',
+        'hardcore': 'The world does not pull punches. Poor decisions can and will result in death.'
+    };
+
+    // Open settings modal
+    if (settingsBtn) {
+        settingsBtn.addEventListener('click', async () => {
+            // Fetch current settings
+            try {
+                const response = await fetch(`/api/plots/${plotId}/settings`);
+                if (response.ok) {
+                    const settings = await response.json();
+                    toneSelect.value = settings.tone || 'classic';
+                    difficultySelect.value = settings.difficulty || 'casual';
+                    toneDescription.textContent = toneDescriptions[toneSelect.value];
+                    difficultyDescription.textContent = difficultyDescriptions[difficultySelect.value];
+                }
+            } catch (error) {
+                console.error('Error fetching settings:', error);
+            }
+            settingsModal.style.display = 'block';
+        });
+    }
+
+    // Close settings modal
+    if (closeSettingsModal) {
+        closeSettingsModal.addEventListener('click', () => {
+            settingsModal.style.display = 'none';
+        });
+    }
+
+    // Update descriptions on change
+    if (toneSelect) {
+        toneSelect.addEventListener('change', () => {
+            toneDescription.textContent = toneDescriptions[toneSelect.value];
+        });
+    }
+
+    if (difficultySelect) {
+        difficultySelect.addEventListener('change', () => {
+            difficultyDescription.textContent = difficultyDescriptions[difficultySelect.value];
+        });
+    }
+
+    // Save settings
+    if (saveSettingsBtn) {
+        saveSettingsBtn.addEventListener('click', async () => {
+            try {
+                const response = await fetch(`/api/plots/${plotId}/settings`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        tone: toneSelect.value,
+                        difficulty: difficultySelect.value
+                    })
+                });
+                if (response.ok) {
+                    const result = await response.json();
+                    console.log('Settings saved:', result);
+                    settingsModal.style.display = 'none';
+                    showToast(`⚙️ Settings: ${toneSelect.value} tone, ${difficultySelect.value} difficulty`, 'success');
+                } else {
+                    showToast('Failed to save settings', 'error');
+                }
+            } catch (error) {
+                console.error('Error saving settings:', error);
+                showToast('Error saving settings', 'error');
+            }
+        });
+    }
+
+    // Close modal when clicking outside
+    window.addEventListener('click', (event) => {
+        if (event.target === settingsModal) {
+            settingsModal.style.display = 'none';
+        }
+        if (event.target === reputationModal) {
+            reputationModal.style.display = 'none';
+        }
+    });
+
+    // ========== REPUTATION MODAL ==========
+    const reputationBtn = document.getElementById('reputation-btn');
+    const reputationModal = document.getElementById('reputation-modal');
+    const closeReputationModal = document.getElementById('close-reputation-modal');
+
+    const dispositionEmojis = {
+        'hostile': '😠',
+        'unfriendly': '😒',
+        'neutral': '😐',
+        'friendly': '😊',
+        'allied': '🤝'
+    };
+
+    const reputationEmojis = {
+        'notorious': '💀',
+        'disliked': '👎',
+        'unknown': '❓',
+        'known': '👋',
+        'respected': '👍',
+        'legendary': '⭐'
+    };
+
+    // Open reputation modal
+    if (reputationBtn) {
+        reputationBtn.addEventListener('click', async () => {
+            // Show modal with loading state
+            const npcsDiv = document.getElementById('reputation-npcs');
+            const factionsDiv = document.getElementById('reputation-factions');
+            const locationsDiv = document.getElementById('reputation-locations');
+            if (npcsDiv) npcsDiv.innerHTML = '<em>Loading...</em>';
+            if (factionsDiv) factionsDiv.innerHTML = '<em>Loading...</em>';
+            if (locationsDiv) locationsDiv.innerHTML = '<em>Loading...</em>';
+            reputationModal.style.display = 'block';
+            
+            try {
+                const response = await fetch(`/api/plots/${plotId}/reputation`);
+                if (response.ok) {
+                    const rep = await response.json();
+                    
+                    // Display NPCs
+                    const npcsDiv = document.getElementById('reputation-npcs');
+                    if (rep.npcs && rep.npcs.length > 0) {
+                        npcsDiv.innerHTML = rep.npcs.map(npc => `
+                            <div class="reputation-item">
+                                <span class="rep-emoji">${dispositionEmojis[npc.disposition] || '😐'}</span>
+                                <span class="rep-name">${npc.name}</span>
+                                <span class="rep-status">${npc.disposition}</span>
+                                <span class="rep-detail">${npc.lastInteraction || ''}</span>
+                            </div>
+                        `).join('');
+                    } else {
+                        npcsDiv.innerHTML = '<em>You haven\'t made any lasting impressions yet.</em>';
+                    }
+                    
+                    // Display Factions
+                    const factionsDiv = document.getElementById('reputation-factions');
+                    if (rep.factions && rep.factions.length > 0) {
+                        factionsDiv.innerHTML = rep.factions.map(f => {
+                            const standingText = f.standing > 50 ? 'Friendly' : f.standing < -50 ? 'Hostile' : 'Neutral';
+                            const barWidth = Math.abs(f.standing);
+                            const barColor = f.standing > 0 ? '#4CAF50' : f.standing < 0 ? '#f44336' : '#888';
+                            return `
+                                <div class="reputation-item">
+                                    <span class="rep-name">${f.name}</span>
+                                    <div class="faction-bar">
+                                        <div class="faction-bar-fill" style="width: ${barWidth}%; background-color: ${barColor};"></div>
+                                    </div>
+                                    <span class="rep-status">${standingText} (${f.standing})</span>
+                                </div>
+                            `;
+                        }).join('');
+                    } else {
+                        factionsDiv.innerHTML = '<em>No faction relationships established.</em>';
+                    }
+                    
+                    // Display Locations
+                    const locationsDiv = document.getElementById('reputation-locations');
+                    if (rep.locations && rep.locations.length > 0) {
+                        locationsDiv.innerHTML = rep.locations.map(loc => `
+                            <div class="reputation-item">
+                                <span class="rep-emoji">${reputationEmojis[loc.reputation] || '❓'}</span>
+                                <span class="rep-name">${loc.name}</span>
+                                <span class="rep-status">${loc.reputation}</span>
+                                <span class="rep-detail">${loc.knownFor || ''}</span>
+                            </div>
+                        `).join('');
+                    } else {
+                        locationsDiv.innerHTML = '<em>You\'re unknown in these lands.</em>';
+                    }
+                    
+                    reputationModal.style.display = 'block';
+                }
+            } catch (error) {
+                console.error('Error fetching reputation:', error);
+            }
+        });
+    }
+
+    // Close reputation modal
+    if (closeReputationModal) {
+        closeReputationModal.addEventListener('click', () => {
+            reputationModal.style.display = 'none';
+        });
+    }
+
+    // ========== STORY SUMMARY ==========
+    const storySummaryBtn = document.getElementById('story-summary-btn');
+    
+    if (storySummaryBtn) {
+        storySummaryBtn.addEventListener('click', async () => {
+            // Show loading state
+            const gameLog = document.getElementById('game-log');
+            const loadingId = 'story-loading-' + Date.now();
+            gameLog.innerHTML += `
+                <div id="${loadingId}" class="message ai">
+                    <div class="author">📜 Story Summary:</div>
+                    <div class="systemText">
+                        <em>Recalling your adventure...</em>
+                    </div>
+                </div>
+            `;
+            gameLog.scrollTop = gameLog.scrollHeight;
+            
+            try {
+                const response = await fetch(`/api/plots/${plotId}/story-summary`);
+                if (response.ok) {
+                    const data = await response.json();
+                    
+                    // Remove loading message
+                    const loadingEl = document.getElementById(loadingId);
+                    if (loadingEl) loadingEl.remove();
+                    
+                    // Show the summary
+                    let keyEventsHtml = '';
+                    if (data.keyEvents && data.keyEvents.length > 0) {
+                        keyEventsHtml = '<br><br><strong>Key Events:</strong><ul>' +
+                            data.keyEvents.map(e => `<li>${e}</li>`).join('') +
+                            '</ul>';
+                    }
+                    
+                    gameLog.innerHTML += `
+                        <div class="message ai story-summary">
+                            <div class="author">📜 The Story So Far:</div>
+                            <div class="systemText">
+                                ${data.summary}
+                                ${keyEventsHtml}
+                                <span class="timestamp">${new Date().toLocaleTimeString()}</span>
+                            </div>
+                        </div>
+                    `;
+                    gameLog.scrollTop = gameLog.scrollHeight;
+                } else {
+                    throw new Error('Failed to generate summary');
+                }
+            } catch (error) {
+                console.error('Error fetching story summary:', error);
+                const loadingEl = document.getElementById(loadingId);
+                if (loadingEl) loadingEl.remove();
+                
+                gameLog.innerHTML += `
+                    <div class="message ai">
+                        <div class="author">System:</div>
+                        <div class="systemText">
+                            Unable to generate story summary. Try again later.
+                            <span class="timestamp">${new Date().toLocaleTimeString()}</span>
+                        </div>
+                    </div>
+                `;
+            }
+        });
+    }
 
 });
