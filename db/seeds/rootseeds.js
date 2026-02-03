@@ -15,7 +15,7 @@ mongoose.connect('mongodb://127.0.0.1:27017/dragons')
         const worldMessage = "Generate a unique fantasy world name and description for a Dungeons and Dragons style game. Respond in JSON with the format: {'worldName': 'name', 'description': 'description'}.";
 
         try {
-            let worldResponse = await prompt("gpt-4o-mini", worldMessage);
+            let worldResponse = await prompt("gpt-5-mini", worldMessage);
 
             console.log("World Name Response:", worldResponse);
 
