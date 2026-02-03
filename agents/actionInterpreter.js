@@ -742,15 +742,37 @@ Provide helpful GM info. Be CONCISE (2-3 sentences). Focus on what's useful to k
         // Stream the response
         const stream = streamPrompt(GAME_MODEL, streamMessage, { tone, difficulty });
         let fullResponse = '';
+        let buffer = '';
+        
         for await (const chunk of stream) {
             fullResponse += chunk;
-            yield chunk;
+            buffer += chunk;
+            
+            // Check if we've hit the start of MAP_UPDATE comment
+            if (buffer.includes('<!--MAP_UPDATE')) {
+                // Stop yielding - buffer the rest
+                continue;
+            }
+            
+            // If no map update marker yet, yield normally
+            if (!buffer.includes('<!--')) {
+                yield chunk;
+                buffer = ''; // Clear buffer since we yielded
+            }
+        }
+        
+        // After streaming completes, remove MAP_UPDATE from final response if present
+        const cleanResponse = fullResponse.replace(/<!--MAP_UPDATE[\s\S]*?-->/g, '').trim();
+        
+        // If there's buffered content that wasn't yielded (before MAP_UPDATE), yield it now
+        if (buffer && !buffer.includes('<!--MAP_UPDATE')) {
+            yield buffer;
         }
 
         // Update state after stream finishes
         if (inputType === 'action' || inputType === 'speak') {
             await updateCurrentState(plot, input, { 
-                outcome: fullResponse, 
+                outcome: cleanResponse, // Use cleaned response for state updates
                 stateChangeRequired: true,
                 consequence_level: 'minor' // Default for streaming
             });

@@ -20,7 +20,7 @@ function showToast(message, type = 'info') {
 document.addEventListener('DOMContentLoaded', () => {
     setupAuthUI();
     const urlParams = new URLSearchParams(window.location.search);
-    const plotId = urlParams.get('plotId');
+    plotId = urlParams.get('plotId'); // Assign to global plotId
     const characterId = urlParams.get('characterId');
 
     if (!plotId || !characterId) {
@@ -31,8 +31,10 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Initialize MapViewer
     if (typeof MapViewer !== 'undefined') {
-        mapViewer = new MapViewer('map-viewer-container', plotId);
-        mapViewer.load();
+        window.mapViewer = new MapViewer('map-viewer-container', plotId);
+        window.mapViewer.load();
+    } else {
+        console.error('MapViewer class not loaded');
     }
 
     const loginBtn = document.getElementById('login-btn');
@@ -811,8 +813,8 @@ async function fetchGameInfo(plotId, characterId) {
                 fetchGameInfo(plotId, characterId);
                 
                 // Refresh map data
-                if (mapViewer) {
-                    await mapViewer.load();
+                if (window.mapViewer) {
+                    await window.mapViewer.load();
                 }
             }
         } catch (error) {
