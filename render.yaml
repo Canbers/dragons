@@ -28,6 +28,6 @@ services:
       - key: OPENAI_ORG_ID
         value: org-0ovBa9zPgFJUMMsFWja7tUCN
       - key: GAME_MODEL
-        value: gpt-4o-mini
+        value: gpt-5-mini
     healthCheckPath: /
     autoDeploy: true
