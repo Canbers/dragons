@@ -1068,10 +1068,25 @@ body {
   border-radius: var(--radius-sm);
   cursor: pointer;
   transition: all 0.2s ease;
+  margin-right: 8px;
 }
 
 #character-table button:hover {
   background: #7c3aed;
+}
+
+#character-table .delete-character-btn {
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--border-subtle);
+  padding: 6px 12px;
+  font-size: 0.9rem;
+}
+
+#character-table .delete-character-btn:hover {
+  background: #ef4444;
+  color: white;
+  border-color: #ef4444;
 }
 
 /* Dropdown */

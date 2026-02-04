@@ -55,20 +55,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Toggle create character dropdown
     createCharacterBtn.addEventListener('click', (event) => {
-        const isDropdownVisible = createCharacterDropdown.classList.contains('show');
-        createCharacterDropdown.classList.remove('show');
-
-        if (!isDropdownVisible) {
-            createCharacterDropdown.style.left = `${event.target.offsetLeft}px`;
-            createCharacterDropdown.style.top = `${event.target.offsetTop + event.target.offsetHeight}px`;
-            createCharacterDropdown.classList.add('show');
-        }
+        event.stopPropagation();
+        const dropdown = createCharacterBtn.closest('.dropdown');
+        dropdown.classList.toggle('show');
     });
 
     // Close the dropdown if the user clicks outside of it
     window.addEventListener('click', (event) => {
-        if (!event.target.matches('#create-character-btn') && !event.target.closest('.dropdown-content')) {
-            createCharacterDropdown.classList.remove('show');
+        if (!event.target.matches('#create-character-btn') && !event.target.closest('.dropdown')) {
+            document.querySelectorAll('.dropdown').forEach(d => d.classList.remove('show'));
         }
     });
 
@@ -111,11 +106,15 @@ document.addEventListener('DOMContentLoaded', () => {
                     <td>${character.name}</td>
                     <td>${character.race}</td>
                     <td>${character.class}</td>
-                    <td>${character.plot?._id || 'undefined'}</td>
-                    <td>${character.plot?.world?.name || 'undefined'}</td>
-                    <td><button class="select-character-btn" data-plot-id="${character.plot?._id || 'undefined'}" data-character-id="${character._id}">Select</button></td>
+                    <td>${character.plot?.world?.name || 'N/A'}</td>
+                    <td>
+                        <button class="select-character-btn" data-plot-id="${character.plot?._id || 'undefined'}" data-character-id="${character._id}">Select</button>
+                        <button class="delete-character-btn" data-character-id="${character._id}" data-character-name="${character.name}">🗑️ Delete</button>
+                    </td>
                 </tr>
             `).join('');
+            
+            // Add event listeners for select buttons
             document.querySelectorAll('.select-character-btn').forEach(button => {
                 button.addEventListener('click', (event) => {
                     const plotId = event.target.getAttribute('data-plot-id');
@@ -124,6 +123,43 @@ document.addEventListener('DOMContentLoaded', () => {
                         window.location.href = `/index.html?plotId=${plotId}&characterId=${characterId}`;
                     } else {
                         alert('Invalid plot ID or character ID');
+                    }
+                });
+            });
+            
+            // Add event listeners for delete buttons
+            document.querySelectorAll('.delete-character-btn').forEach(button => {
+                button.addEventListener('click', async (event) => {
+                    const characterId = event.target.getAttribute('data-character-id');
+                    const characterName = event.target.getAttribute('data-character-name');
+                    
+                    // Show confirmation dialog
+                    const confirmed = confirm(
+                        `⚠️ DELETE CHARACTER: ${characterName}\n\n` +
+                        `This action CANNOT be undone.\n` +
+                        `All story progress for this character will be permanently lost.\n\n` +
+                        `Are you absolutely sure you want to delete this character?`
+                    );
+                    
+                    if (confirmed) {
+                        showSpinner();
+                        try {
+                            const response = await fetch(`/api/characters/${characterId}`, {
+                                method: 'DELETE'
+                            });
+                            
+                            if (!response.ok) {
+                                throw new Error('Failed to delete character');
+                            }
+                            
+                            hideSpinner();
+                            // Refresh the character list
+                            fetchCharacters();
+                        } catch (error) {
+                            hideSpinner();
+                            alert('Error deleting character. Please try again.');
+                            console.error('Error deleting character:', error);
+                        }
                     }
                 });
             });
