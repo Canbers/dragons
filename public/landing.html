@@ -3,35 +3,62 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="D&D Style Adventure Game - Login">
+    <meta name="description" content="Dragons - AI-Powered RPG Adventure">
     <link rel="stylesheet" href="styles.css">
-    <title>Adventure Game - Login</title>
-    <!-- Google Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap&family=MedievalSharp&display=swap" rel="stylesheet">
+    <title>Dragons - Choose Your Adventure</title>
 </head>
-<body>
-<!-- Auth container -->
-<div id="auth-container" class="auth-container">
-    <button id="login-btn" class="auth-button">Login</button>
-    <div id="user-menu" class="user-menu" style="display: none;">
-        <button id="user-menu-button">
-            <span id="username">Username</span> <i class="arrow down"></i>
-        </button>
-        <div id="user-dropdown" class="dropdown-content" style="display: none;">
-            <button id="profile-btn">View Profile</button>
-            <button id="logout-btn">Logout</button>
+<body class="landing-body">
+    <!-- Hero Section -->
+    <div class="landing-hero">
+        <div class="landing-content">
+            <div class="landing-logo">
+                <span class="dragon-icon">🐉</span>
+                <h1>Dragons</h1>
+            </div>
+            <p class="landing-tagline">An AI-Powered Choose Your Own Adventure</p>
+            <p class="landing-description">
+                Step into a living, breathing world powered by AI. Your choices matter, consequences are real, 
+                and the story unfolds based on what you do—not what you're supposed to do.
+            </p>
+            
+            <!-- Auth Section -->
+            <div class="landing-auth">
+                <button id="login-btn" class="landing-login-btn">
+                    <span>Login to Continue</span>
+                    <span class="btn-arrow">→</span>
+                </button>
+                
+                <!-- User menu (hidden by default, shown when logged in) -->
+                <div id="user-menu" class="landing-user-menu" style="display: none;">
+                    <span class="welcome-text">Welcome back, <span id="username">Adventurer</span></span>
+                    <div class="landing-actions">
+                        <button id="profile-btn" class="landing-btn-secondary">View Profile</button>
+                        <button id="logout-btn" class="landing-btn-tertiary">Logout</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Feature Cards -->
+        <div class="landing-features">
+            <div class="feature-card">
+                <div class="feature-icon">🎲</div>
+                <h3>The Indifferent World</h3>
+                <p>The world doesn't revolve around you. It reacts logically to your actions—victories are earned, not given.</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">🤖</div>
+                <h3>AI Game Master</h3>
+                <p>Powered by advanced AI that adapts to your choices in real-time. No two adventures are the same.</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">🗺️</div>
+                <h3>Living Worlds</h3>
+                <p>Procedurally generated worlds with persistent history. Every action shapes the world around you.</p>
+            </div>
         </div>
     </div>
-</div>
-<!-- Main content -->
-<div id="landing-container" class="landing-container">
-    <h2>A true "choose your own adventure"!</h2>
-    <p>Please log in to continue.</p>
-    <div class="info-section">
-        <p>Based on Tabletop RPG elements, this game allows the player to go on any advneture of their choosing. <br> The Game Master is powered by OpenAI's GPT models and will react to whatever the player says and does.</p>
-        <p>The world structure is procedurally generated systematically, but all the descriptions and colouring is done by AI. <br> Everything generated is persisted in the database for that world, so that the AI is grounded and does not hallucinate previous events and details.</p>
-    </div>
-</div>
-<script src="/landing.js" type="module"></script>
+    
+    <script src="/landing.js" type="module"></script>
 </body>
 </html>
