@@ -772,7 +772,9 @@ async function fetchGameInfo(plotId, characterId) {
                                 
                                 if (data.chunk) {
                                     fullMessage += data.chunk;
-                                    streamContainer.textContent = fullMessage;
+                                    // Strip MAP_UPDATE comment from display (but keep for processing)
+                                    const displayMessage = fullMessage.replace(/<!--MAP_UPDATE[\s\S]*?-->/g, '').trim();
+                                    streamContainer.textContent = displayMessage;
                                     gameLog.scrollTop = gameLog.scrollHeight;
                                 }
                                 
