@@ -31,8 +31,8 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Initialize MapViewer
     if (typeof MapViewer !== 'undefined') {
-        window.mapViewer = new MapViewer('map-viewer-container', plotId);
-        window.mapViewer.load();
+        window.mapViewer = new MapViewer('map-viewer-container');
+        window.mapViewer.initialize(plotId, characterId);
     } else {
         console.error('MapViewer class not loaded');
     }
