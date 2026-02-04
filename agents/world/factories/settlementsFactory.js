@@ -246,7 +246,8 @@ Make connections logical - gates connect to main streets, taverns near markets, 
     let retries = 5;
     while (retries > 0) {
         try {
-            const result = await gpt.prompt('gpt-5-mini', prompt);
+            const systemPrompt = 'You are a world-building assistant for a fantasy RPG. Generate creative, consistent content in valid JSON format only.';
+            const result = await gpt.simplePrompt('gpt-5-mini', systemPrompt, prompt);
             const locations = JSON.parse(result.content);
             
             // Validate and enhance locations
