@@ -601,6 +601,7 @@ const processMapUpdate = async (plotId, aiResponse) => {
  * Streaming version of interpret - yields text chunks as they come
  */
 const interpretStream = async function* (input, inputType, plotId, cookies) {
+    const startTime = Date.now();
     try {
         // Get recent messages for context
         let recentMessages = [];
@@ -609,11 +610,13 @@ const interpretStream = async function* (input, inputType, plotId, cookies) {
         } catch (e) {
             console.log('No recent messages found, starting fresh');
         }
+        console.log(`[TIMING] getRecentMessages: ${Date.now() - startTime}ms`);
         
         // Get plot with populated location data
         let plot = await Plot.findById(plotId)
             .populate('current_state.current_location.region')
             .populate('current_state.current_location.settlement');
+        console.log(`[TIMING] Plot.findById with populate: ${Date.now() - startTime}ms`);
 
         if (!plot) {
             yield "Error: Plot not found";
@@ -622,10 +625,22 @@ const interpretStream = async function* (input, inputType, plotId, cookies) {
 
         // Ensure region and settlement are described
         if (plot.current_state?.current_location?.region?._id) {
-            await ensureDescription(
-                plot.current_state.current_location.region._id, 
-                plot.current_state.current_location.settlement?._id
-            );
+            const regionId = plot.current_state.current_location.region._id;
+            const settlementId = plot.current_state.current_location.settlement?._id;
+            
+            // Check if description is needed BEFORE awaiting
+            const region = await Region.findById(regionId);
+            const needsRegionDesc = !region.described;
+            const needsSettlementDesc = settlementId ? !(await Settlement.findById(settlementId)).described : false;
+            
+            if (needsRegionDesc || needsSettlementDesc) {
+                yield "🗺️ Discovering new lands...";
+            }
+            
+            await ensureDescription(regionId, settlementId);
+            if (needsRegionDesc || needsSettlementDesc) {
+                console.log(`[TIMING] ensureDescription (with GPT): ${Date.now() - startTime}ms`);
+            }
         }
 
         // Build context
