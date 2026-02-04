@@ -521,21 +521,26 @@ app.post('/api/plot', ensureAuthenticated, async (req, res) => {
         // OPTIMIZATION: Lazy-load descriptions on first use instead of upfront
         // await describeRegionAndSettlements(initialRegion._id);
 
-        let locationName, locationDescription, coordinates;
+        let locationName, locationDescription, coordinates, settlement = null;
 
         if (initialSettlement) {
-            const settlement = await Settlement.findById(initialSettlement);
-            locationName = settlement.name;
-            locationDescription = settlement.description;
+            settlement = await Settlement.findById(initialSettlement);
+            locationName = settlement.name || 'Starting Settlement';
+            locationDescription = settlement.description || 'A place to begin your journey.';
             const randomIndex = Math.floor(Math.random() * settlement.coordinates.length);
             coordinates = settlement.coordinates[randomIndex];
         } else {
-            locationName = initialRegion.name;
-            locationDescription = initialRegion.description;
-            const randomIndex = Math.floor(Math.random() * region.coordinates.length);
+            locationName = initialRegion.name || 'Starting Region';
+            locationDescription = initialRegion.description || 'An unexplored land awaits.';
+            // Fixed: was "region.coordinates", should be "initialRegion.coordinates"
+            const randomIndex = Math.floor(Math.random() * initialRegion.coordinates.length);
             coordinates = initialRegion.coordinates[randomIndex];
         }
         
+        // Ensure coordinates are valid
+        if (!coordinates || coordinates.length < 2) {
+            coordinates = [0, 0];
+        }
 
         const plot = new Plot({
             world: worldId,
@@ -549,15 +554,39 @@ app.post('/api/plot', ensureAuthenticated, async (req, res) => {
                     coordinates: coordinates,
                     locationName: locationName,
                     locationDescription: locationDescription,
-                    description: initialSettlement ? initialSettlement.name : initialRegion.name
+                    description: locationDescription,
+                    map_data: {
+                        semantic_coordinates: { x: coordinates[0], y: coordinates[1], z: 0 },
+                        connections: [],
+                        points_of_interest: []
+                    }
                 },
-                current_time: 'morning', // Default initial time
-                environment_conditions: 'clear', // Default initial conditions
-                mood_tone: 'neutral' // Default initial mood
+                current_time: 'morning',
+                environment_conditions: 'clear',
+                mood_tone: 'neutral'
+            },
+            settings: {
+                tone: 'classic',
+                difficulty: 'casual'
             }
         });
 
         await plot.save();
+        
+        // Create initial game log entry with opening narrative
+        const GameLog = require('./db/models/GameLog');
+        const openingMessage = `You arrive in ${locationName}, ${locationDescription}\n\nThe world stretches before you—alive, indifferent, and full of possibility. What will you do?`;
+        
+        const gameLog = new GameLog({
+            plotId: plot._id,
+            messages: [{
+                author: 'AI',
+                content: openingMessage,
+                timestamp: new Date()
+            }]
+        });
+        await gameLog.save();
+        
         res.json(plot);
     } catch (error) {
         res.status(500).send(error.message);
