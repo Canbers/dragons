@@ -772,31 +772,15 @@ async function fetchGameInfo(plotId, characterId) {
                                 
                                 if (data.chunk) {
                                     fullMessage += data.chunk;
-                                    // Strip MAP_UPDATE comment from display (but keep for processing)
-                                    const displayMessage = fullMessage.replace(/<!--MAP_UPDATE[\s\S]*?-->/g, '').trim();
-                                    streamContainer.textContent = displayMessage;
+                                    streamContainer.textContent = fullMessage;
                                     gameLog.scrollTop = gameLog.scrollHeight;
                                 }
                                 
-                                if (data.mapUpdate) {
-                                    // Receive map update separately - apply it via API
-                                    console.log('[Map Update Received]', data.mapUpdate);
-                                    await fetch(`/api/plots/${plotId}/map`, {
-                                        method: 'PATCH',
-                                        headers: {
-                                            'Content-Type': 'application/json',
-                                            'Authorization': `Bearer ${token}`
-                                        },
-                                        body: JSON.stringify(data.mapUpdate)
-                                    });
-                                    
-                                    // Refresh map viewer immediately
-                                    if (window.mapViewer) {
-                                        await window.mapViewer.load();
-                                    }
-                                }
-                                
                                 if (data.done) {
+                                    // Refresh map viewer after action completes
+                                    if (window.mapViewer) {
+                                        await window.mapViewer.refresh();
+                                    }
                                     // Stream complete
                                     streamCursor.style.display = 'none';
                                     timestampEl.style.display = 'inline';
@@ -832,8 +816,6 @@ async function fetchGameInfo(plotId, characterId) {
                 
                 // Refresh game info to update character sheet and state panel
                 fetchGameInfo(plotId, characterId);
-                
-                // Map already refreshed when mapUpdate event received (no need to refresh again)
             }
         } catch (error) {
             console.error('Error while submitting action:', error);

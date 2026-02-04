@@ -1,10 +1,12 @@
 /**
- * MapViewer.js - Interactive Semantic Map Component
+ * MapViewer.js - Interactive Semantic Map Component (v2)
  * 
  * Three zoom levels:
- * - Region: High-level overview of world regions
- * - Local: Connected locations from current position
- * - Scene: Points of interest in current location
+ * - Region: High-level overview of world regions (terrain map)
+ * - Local: Connected locations within current settlement
+ * - Scene: Points of interest at current location
+ * 
+ * Data is seeded from settlement data and expanded through AI discoveries.
  */
 
 class MapViewer {
@@ -31,8 +33,7 @@ class MapViewer {
     try {
       const response = await fetch(`/api/plots/${this.currentPlotId}/map`);
       if (!response.ok) throw new Error('Failed to fetch map data');
-      const data = await response.json();
-      this.mapData = data.map_data || this.getDefaultMapData();
+      this.mapData = await response.json();
     } catch (error) {
       console.error('Error fetching map data:', error);
       this.mapData = this.getDefaultMapData();
@@ -41,9 +42,15 @@ class MapViewer {
 
   getDefaultMapData() {
     return {
-      current_location: { name: 'Unknown Location', x: 0, y: 0, z: 0 },
-      connections: [],
-      points_of_interest: []
+      region: { name: 'Unknown Region', map: null, settlements: [] },
+      local: { 
+        settlementName: 'Unknown Settlement',
+        current: 'Unknown Location', 
+        currentDescription: '',
+        connections: [], 
+        discoveredLocations: [] 
+      },
+      scene: { location: 'Unknown', description: '', pois: [] }
     };
   }
 
@@ -103,51 +110,74 @@ class MapViewer {
   }
 
   renderRegionView() {
+    const region = this.mapData.region || {};
+    
     return `
       <div class="region-view">
-        <h3>🗺️ World Overview</h3>
-        <p class="map-note">Region view coming soon - shows larger world structure</p>
+        <h3>🗺️ ${region.name || 'World Overview'}</h3>
+        ${region.description ? `<p class="region-description">${region.description}</p>` : ''}
+        <div class="region-map-placeholder">
+          <p class="map-note">Region map view coming soon</p>
+          <p class="hint">Shows terrain and settlement locations</p>
+        </div>
         <div class="current-location-card">
-          <h4>Current Location</h4>
-          <p><strong>${this.mapData.current_location.name}</strong></p>
-          <p class="coords">Grid: ${this.mapData.current_location.x}, ${this.mapData.current_location.y}, ${this.mapData.current_location.z}</p>
+          <h4>Current Settlement</h4>
+          <p><strong>${this.mapData.local?.settlementName || 'Unknown'}</strong></p>
+          <p class="location-detail">${this.mapData.local?.current || 'Unknown location'}</p>
         </div>
       </div>
     `;
   }
 
   renderLocalView() {
-    if (!this.mapData.connections || this.mapData.connections.length === 0) {
+    const local = this.mapData.local || {};
+    const connections = local.connections || [];
+    const discovered = local.discoveredLocations || [];
+    
+    if (connections.length === 0 && discovered.length <= 1) {
       return `
         <div class="local-view">
+          <div class="current-location-header">
+            <h3>📍 ${local.current || 'Unknown Location'}</h3>
+            <p class="settlement-name">in ${local.settlementName || 'Unknown Settlement'}</p>
+          </div>
           <div class="map-placeholder">
             <p>No nearby locations discovered yet.</p>
-            <p class="hint">Explore the world to reveal connections!</p>
+            <p class="hint">Explore the settlement to reveal connections!</p>
           </div>
         </div>
       `;
     }
 
-    // Radial layout for connections
-    const svg = this.createRadialGraph();
+    // Render the radial connection graph
+    const svg = this.createConnectionGraph(local);
     
     return `
       <div class="local-view">
+        <div class="current-location-header">
+          <h3>📍 ${local.current || 'Unknown Location'}</h3>
+          <p class="settlement-name">in ${local.settlementName || 'Unknown Settlement'}</p>
+        </div>
+        ${local.currentDescription ? `<p class="location-description">${local.currentDescription}</p>` : ''}
         ${svg}
+        <div class="discovered-count">
+          <span>${discovered.length} location${discovered.length !== 1 ? 's' : ''} discovered</span>
+        </div>
       </div>
     `;
   }
 
-  createRadialGraph() {
-    const width = 600;
-    const height = 500;
+  createConnectionGraph(local) {
+    const connections = local.connections || [];
+    if (connections.length === 0) {
+      return '';
+    }
+
+    const width = 500;
+    const height = 400;
     const centerX = width / 2;
     const centerY = height / 2;
-    const radius = 180;
-
-    // Current location in center
-    const currentLoc = this.mapData.current_location;
-    const connections = this.mapData.connections || [];
+    const radius = 140;
 
     // Calculate positions for connected locations
     const angleStep = (2 * Math.PI) / Math.max(connections.length, 1);
@@ -161,22 +191,19 @@ class MapViewer {
     });
 
     // Build SVG
-    let svgContent = `<svg width="${width}" height="${height}" class="map-graph">`;
+    let svgContent = `<svg width="100%" height="${height}" viewBox="0 0 ${width} ${height}" class="map-graph">`;
 
     // Draw connections (lines)
     nodes.forEach(node => {
-      const opacity = node.connection.discovered ? 1 : 0.3;
-      const strokeDash = node.connection.discovered ? 'none' : '5,5';
       svgContent += `
         <line 
           x1="${centerX}" 
           y1="${centerY}" 
           x2="${node.x}" 
           y2="${node.y}" 
-          stroke="#666" 
-          stroke-width="2" 
-          stroke-dasharray="${strokeDash}"
-          opacity="${opacity}"
+          stroke="var(--border-color, #444)" 
+          stroke-width="2"
+          opacity="0.6"
         />
       `;
     });
@@ -186,83 +213,73 @@ class MapViewer {
       <circle 
         cx="${centerX}" 
         cy="${centerY}" 
-        r="40" 
-        fill="#4CAF50" 
-        stroke="#fff" 
+        r="35" 
+        fill="var(--accent-color, #4CAF50)" 
+        stroke="var(--text-primary, #fff)" 
         stroke-width="3"
         class="location-node current"
       />
       <text 
         x="${centerX}" 
-        y="${centerY - 50}" 
+        y="${centerY - 45}" 
         text-anchor="middle" 
-        fill="#fff" 
+        fill="var(--text-primary, #fff)" 
         font-weight="bold"
-        font-size="14"
-      >
-        📍 You Are Here
-      </text>
-      <text 
-        x="${centerX}" 
-        y="${centerY + 60}" 
-        text-anchor="middle" 
-        fill="#ccc" 
         font-size="12"
       >
-        ${currentLoc.name}
+        📍 You Are Here
       </text>
     `;
 
     // Draw connected location nodes
     nodes.forEach((node, index) => {
       const conn = node.connection;
-      const opacity = conn.discovered ? 1 : 0.5;
-      const fill = conn.discovered ? '#2196F3' : '#666';
+      const directionEmoji = this.getDirectionEmoji(conn.direction);
       
       svgContent += `
         <circle 
           cx="${node.x}" 
           cy="${node.y}" 
-          r="30" 
-          fill="${fill}" 
-          stroke="#fff" 
+          r="28" 
+          fill="var(--bg-secondary, #2a2a4a)" 
+          stroke="var(--accent-secondary, #6366f1)" 
           stroke-width="2"
-          opacity="${opacity}"
-          class="location-node"
+          class="location-node clickable"
           data-location="${conn.name}"
           data-index="${index}"
           style="cursor: pointer;"
         />
         <text 
           x="${node.x}" 
-          y="${node.y + 45}" 
+          y="${node.y - 38}" 
           text-anchor="middle" 
-          fill="#ddd" 
-          font-size="12"
-          pointer-events="none"
-        >
-          ${conn.direction || ''}
-        </text>
-        <text 
-          x="${node.x}" 
-          y="${node.y + 60}" 
-          text-anchor="middle" 
-          fill="#fff" 
+          fill="var(--text-muted, #999)" 
           font-size="11"
           pointer-events="none"
         >
-          ${conn.name}
+          ${directionEmoji} ${conn.direction || ''}
         </text>
-        ${conn.distance ? `
+        <text 
+          x="${node.x}" 
+          y="${node.y + 45}" 
+          text-anchor="middle" 
+          fill="var(--text-primary, #fff)" 
+          font-size="11"
+          font-weight="500"
+          pointer-events="none"
+        >
+          ${this.truncateName(conn.name, 15)}
+        </text>
+        ${conn.distance && conn.distance !== 'adjacent' ? `
           <text 
             x="${node.x}" 
-            y="${node.y + 75}" 
+            y="${node.y + 58}" 
             text-anchor="middle" 
-            fill="#999" 
-            font-size="10"
+            fill="var(--text-muted, #666)" 
+            font-size="9"
             pointer-events="none"
           >
-            ${conn.distance}
+            (${conn.distance})
           </text>
         ` : ''}
       `;
@@ -272,14 +289,33 @@ class MapViewer {
     return svgContent;
   }
 
+  getDirectionEmoji(direction) {
+    const emojis = {
+      'north': '⬆️', 'south': '⬇️', 'east': '➡️', 'west': '⬅️',
+      'northeast': '↗️', 'northwest': '↖️', 'southeast': '↘️', 'southwest': '↙️',
+      'up': '🔼', 'down': '🔽', 'inside': '🚪', 'outside': '🚪'
+    };
+    return emojis[direction] || '•';
+  }
+
+  truncateName(name, maxLength) {
+    if (!name) return 'Unknown';
+    return name.length > maxLength ? name.substring(0, maxLength - 2) + '...' : name;
+  }
+
   renderSceneView() {
-    const pois = this.mapData.points_of_interest || [];
+    const scene = this.mapData.scene || {};
+    const pois = scene.pois || [];
     
     if (pois.length === 0) {
       return `
         <div class="scene-view">
+          <div class="scene-header">
+            <h3>🔍 ${scene.location || 'Current Location'}</h3>
+          </div>
+          ${scene.description ? `<p class="scene-description">${scene.description}</p>` : ''}
           <div class="map-placeholder">
-            <p>No points of interest here.</p>
+            <p>No points of interest discovered here yet.</p>
             <p class="hint">Interact with the world to discover NPCs, objects, and landmarks!</p>
           </div>
         </div>
@@ -287,22 +323,28 @@ class MapViewer {
     }
 
     const poiList = pois.map((poi, index) => {
-      const icon = this.getPoiIcon(poi.type);
+      const icon = poi.icon || this.getPoiIcon(poi.type);
       return `
         <div class="poi-card" data-poi-id="${poi.id}" data-poi-index="${index}">
           <div class="poi-header">
             <span class="poi-icon">${icon}</span>
-            <h4>${poi.name}</h4>
+            <div class="poi-info">
+              <h4>${poi.name}</h4>
+              <span class="poi-type">${poi.type}</span>
+            </div>
           </div>
           <p class="poi-description">${poi.description || 'No description available.'}</p>
-          ${poi.interaction_count ? `<p class="poi-meta">Interactions: ${poi.interaction_count}</p>` : ''}
+          ${poi.interactionCount > 0 ? `<p class="poi-meta">Interactions: ${poi.interactionCount}</p>` : ''}
         </div>
       `;
     }).join('');
 
     return `
       <div class="scene-view">
-        <h3>🔍 Points of Interest</h3>
+        <div class="scene-header">
+          <h3>🔍 ${scene.location || 'Current Location'}</h3>
+        </div>
+        ${scene.description ? `<p class="scene-description">${scene.description}</p>` : ''}
         <div class="poi-list">
           ${poiList}
         </div>
@@ -312,15 +354,16 @@ class MapViewer {
 
   getPoiIcon(type) {
     const icons = {
-      npc: '👤',
-      object: '📦',
-      landmark: '🏛️',
-      creature: '🐉',
-      item: '⚔️',
-      door: '🚪',
-      default: '📍'
+      'npc': '👤',
+      'object': '📦',
+      'entrance': '🚪',
+      'landmark': '🏛️',
+      'danger': '⚠️',
+      'quest': '❗',
+      'shop': '🛒',
+      'other': '📍'
     };
-    return icons[type] || icons.default;
+    return icons[type] || icons.other;
   }
 
   attachEventListeners() {
@@ -333,15 +376,18 @@ class MapViewer {
       });
     });
 
-    // Location node clicks (SVG)
-    const nodes = this.container.querySelectorAll('.location-node:not(.current)');
-    nodes.forEach(node => {
-      node.addEventListener('click', (e) => {
-        const locationName = e.target.dataset.location;
-        const index = parseInt(e.target.dataset.index);
-        this.showLocationActions(locationName, index);
+    // Location node clicks (SVG) - use event delegation
+    const mapContent = this.container.querySelector('.map-content');
+    if (mapContent) {
+      mapContent.addEventListener('click', (e) => {
+        const node = e.target.closest('.location-node.clickable');
+        if (node) {
+          const locationName = node.dataset.location;
+          const index = parseInt(node.dataset.index);
+          this.showLocationActions(locationName, index);
+        }
       });
-    });
+    }
 
     // POI card clicks
     const poiCards = this.container.querySelectorAll('.poi-card');
@@ -380,22 +426,21 @@ class MapViewer {
   }
 
   showLocationActions(locationName, connectionIndex) {
-    const connection = this.mapData.connections[connectionIndex];
+    const connection = this.mapData.local?.connections?.[connectionIndex];
     const panel = this.container.querySelector('#action-panel');
     const title = this.container.querySelector('#action-panel-title');
     const body = this.container.querySelector('#action-panel-body');
 
+    if (!panel || !title || !body) return;
+
     title.textContent = locationName;
 
+    const direction = connection?.direction;
     const actions = [
-      { label: '🚶 Travel here', action: `Travel to ${locationName}` },
-      { label: '🔭 Scout ahead', action: `Scout ${locationName} from a distance` },
-      { label: '❓ Learn more', action: `What do I know about ${locationName}?` }
+      { label: `🚶 Go ${direction || 'there'}`, action: `I go to ${locationName}` },
+      { label: '👀 Look toward', action: `I look toward ${locationName}` },
+      { label: '❓ Ask about', action: `What do I know about ${locationName}?` }
     ];
-
-    if (!connection.discovered) {
-      actions.unshift({ label: '👁️ Investigate', action: `Investigate the path toward ${locationName}` });
-    }
 
     body.innerHTML = actions.map(a => `
       <button class="quick-action-btn" data-action="${a.action}">
@@ -414,17 +459,55 @@ class MapViewer {
   }
 
   showPoiActions(poiIndex) {
-    const poi = this.mapData.points_of_interest[poiIndex];
+    const poi = this.mapData.scene?.pois?.[poiIndex];
+    if (!poi) return;
+
     const panel = this.container.querySelector('#action-panel');
     const title = this.container.querySelector('#action-panel-title');
     const body = this.container.querySelector('#action-panel-body');
 
+    if (!panel || !title || !body) return;
+
     title.textContent = poi.name;
 
-    const actions = poi.suggested_actions || [
-      { label: '🔍 Examine', action: `Examine ${poi.name}` },
-      { label: '💬 Interact', action: `Interact with ${poi.name}` }
-    ];
+    // Generate contextual actions based on POI type
+    let actions = [];
+    switch (poi.type) {
+      case 'npc':
+        actions = [
+          { label: '💬 Talk to', action: `I approach and speak to ${poi.name}` },
+          { label: '👀 Observe', action: `I observe ${poi.name} from a distance` },
+          { label: '❓ Ask about', action: `What can I tell about ${poi.name}?` }
+        ];
+        break;
+      case 'object':
+      case 'landmark':
+        actions = [
+          { label: '🔍 Examine', action: `I examine ${poi.name} closely` },
+          { label: '🖐️ Touch/Use', action: `I interact with ${poi.name}` },
+          { label: '❓ Study', action: `What do I notice about ${poi.name}?` }
+        ];
+        break;
+      case 'entrance':
+        actions = [
+          { label: '🚪 Enter', action: `I go through ${poi.name}` },
+          { label: '👀 Peek', action: `I peek through ${poi.name}` },
+          { label: '👂 Listen', action: `I listen at ${poi.name}` }
+        ];
+        break;
+      case 'danger':
+        actions = [
+          { label: '⚠️ Assess', action: `I carefully assess ${poi.name}` },
+          { label: '🏃 Avoid', action: `I try to avoid ${poi.name}` },
+          { label: '💪 Confront', action: `I confront ${poi.name}` }
+        ];
+        break;
+      default:
+        actions = [
+          { label: '🔍 Examine', action: `I examine ${poi.name}` },
+          { label: '💬 Interact', action: `I interact with ${poi.name}` }
+        ];
+    }
 
     body.innerHTML = actions.map(a => `
       <button class="quick-action-btn" data-action="${a.action}">

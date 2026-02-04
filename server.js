@@ -775,23 +775,72 @@ app.get('/api/plots/:plotId/map', ensureAuthenticated, async (req, res) => {
             return res.status(404).json({ error: 'Plot not found' });
         }
         
-        // Initialize map_data if it doesn't exist
-        if (!plot.current_state.current_location.map_data) {
-            plot.current_state.current_location.map_data = {
-                semantic_coordinates: { x: 0, y: 0, z: 0 },
-                connections: [],
-                points_of_interest: []
-            };
+        const region = plot.current_state.current_location.region;
+        const settlement = plot.current_state.current_location.settlement;
+        const currentLocationName = plot.current_state.current_location.locationName;
+        
+        // Find current location within settlement (if we have locations)
+        let currentLocation = null;
+        let connections = [];
+        let pois = [];
+        
+        if (settlement?.locations?.length > 0) {
+            currentLocation = settlement.locations.find(l => 
+                l.name.toLowerCase() === currentLocationName?.toLowerCase()
+            ) || settlement.locations.find(l => l.isStartingLocation) || settlement.locations[0];
+            
+            if (currentLocation) {
+                connections = currentLocation.connections || [];
+                pois = (currentLocation.pois || []).filter(p => p.discovered);
+            }
         }
         
+        // Build response with three zoom levels of data
         res.json({
-            current: {
-                name: plot.current_state.current_location.locationName,
-                description: plot.current_state.current_location.description,
-                ...plot.current_state.current_location.map_data
+            // Region view data
+            region: {
+                name: region?.name || 'Unknown Region',
+                description: region?.description || '',
+                map: region?.map || null,  // The terrain array for canvas rendering
+                settlements: []  // TODO: Add other settlements with coords
             },
-            region: plot.current_state.current_location.region?.name,
-            settlement: plot.current_state.current_location.settlement?.name
+            
+            // Local view data (locations within settlement)
+            local: {
+                settlementName: settlement?.name || 'Unknown Settlement',
+                current: currentLocation?.name || currentLocationName || 'Unknown Location',
+                currentDescription: currentLocation?.description || plot.current_state.current_location.description || '',
+                connections: connections.map(c => ({
+                    name: c.locationName,
+                    direction: c.direction,
+                    description: c.description,
+                    distance: c.distance || 'adjacent'
+                })),
+                // All discovered locations in the settlement
+                discoveredLocations: (settlement?.locations || [])
+                    .filter(l => l.discovered)
+                    .map(l => ({
+                        name: l.name,
+                        type: l.type,
+                        shortDescription: l.shortDescription,
+                        coordinates: l.coordinates,
+                        isCurrent: l.name.toLowerCase() === currentLocation?.name?.toLowerCase()
+                    }))
+            },
+            
+            // Scene view data (POIs at current location)
+            scene: {
+                location: currentLocation?.name || currentLocationName || 'Unknown',
+                description: currentLocation?.description || '',
+                pois: pois.map(p => ({
+                    id: p._id,
+                    name: p.name,
+                    type: p.type,
+                    description: p.description,
+                    icon: p.icon,
+                    interactionCount: p.interactionCount || 0
+                }))
+            }
         });
     } catch (error) {
         console.error('Error fetching map data:', error);
