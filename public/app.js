@@ -1133,12 +1133,12 @@ async function fetchGameInfo(plotId, characterId) {
 
     // ========== CHARACTER SHEET EXPAND ==========
     const expandCharBtn = document.getElementById('expand-character-btn');
-    const characterDetails = document.getElementById('character-details');
+    const characterDetailsPanel = document.getElementById('character-details');
     
-    if (expandCharBtn && characterDetails) {
+    if (expandCharBtn && characterDetailsPanel) {
         expandCharBtn.addEventListener('click', () => {
-            const isHidden = characterDetails.style.display === 'none';
-            characterDetails.style.display = isHidden ? 'block' : 'none';
+            const isHidden = characterDetailsPanel.style.display === 'none';
+            characterDetailsPanel.style.display = isHidden ? 'block' : 'none';
             expandCharBtn.textContent = isHidden ? '🔼 Hide Sheet' : '📋 Full Sheet';
         });
     }
