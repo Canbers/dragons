@@ -1,518 +1,470 @@
 /**
- * Interactive Semantic Map Viewer
- * Displays locations, connections, and POIs with clickable interactions
+ * MapViewer.js - Interactive Semantic Map Component
+ * 
+ * Three zoom levels:
+ * - Region: High-level overview of world regions
+ * - Local: Connected locations from current position
+ * - Scene: Points of interest in current location
  */
 
 class MapViewer {
-    constructor(containerId, plotId) {
-        this.container = document.getElementById(containerId);
-        this.plotId = plotId;
-        this.currentData = null;
-        this.selectedNode = null;
-        this.currentZoom = 'local'; // 'region', 'local', 'scene'
-        
-        if (!this.container) {
-            console.error('MapViewer: container not found:', containerId);
-            return;
+  constructor(containerId) {
+    this.container = document.getElementById(containerId);
+    this.currentZoom = 'local'; // 'region' | 'local' | 'scene'
+    this.currentPlotId = null;
+    this.currentCharacterId = null;
+    this.mapData = null;
+    
+    this.render();
+  }
+
+  async initialize(plotId, characterId) {
+    this.currentPlotId = plotId;
+    this.currentCharacterId = characterId;
+    await this.fetchMapData();
+    this.render();
+  }
+
+  async fetchMapData() {
+    if (!this.currentPlotId) return;
+    
+    try {
+      const response = await fetch(`/api/plots/${this.currentPlotId}/map`);
+      if (!response.ok) throw new Error('Failed to fetch map data');
+      const data = await response.json();
+      this.mapData = data.map_data || this.getDefaultMapData();
+    } catch (error) {
+      console.error('Error fetching map data:', error);
+      this.mapData = this.getDefaultMapData();
+    }
+  }
+
+  getDefaultMapData() {
+    return {
+      current_location: { name: 'Unknown Location', x: 0, y: 0, z: 0 },
+      connections: [],
+      points_of_interest: []
+    };
+  }
+
+  render() {
+    if (!this.container) return;
+
+    this.container.innerHTML = `
+      <div class="map-header">
+        <div class="zoom-tabs">
+          <button class="zoom-tab ${this.currentZoom === 'region' ? 'active' : ''}" data-zoom="region">
+            🗺️ Region
+          </button>
+          <button class="zoom-tab ${this.currentZoom === 'local' ? 'active' : ''}" data-zoom="local">
+            🧭 Local
+          </button>
+          <button class="zoom-tab ${this.currentZoom === 'scene' ? 'active' : ''}" data-zoom="scene">
+            🔍 Scene
+          </button>
+        </div>
+      </div>
+      <div class="map-content">
+        ${this.renderMapForZoom()}
+      </div>
+      <div class="action-panel" id="action-panel" style="display: none;">
+        <div class="action-panel-header">
+          <h3 id="action-panel-title">Actions</h3>
+          <button class="close-panel" id="close-action-panel">✕</button>
+        </div>
+        <div class="action-panel-body" id="action-panel-body">
+          <!-- Quick actions will be inserted here -->
+        </div>
+        <div class="custom-action">
+          <input type="text" id="custom-action-input" placeholder="Or type your own action...">
+          <button id="custom-action-submit">→</button>
+        </div>
+      </div>
+    `;
+
+    this.attachEventListeners();
+  }
+
+  renderMapForZoom() {
+    if (!this.mapData) {
+      return '<div class="map-placeholder">Loading map...</div>';
+    }
+
+    switch (this.currentZoom) {
+      case 'region':
+        return this.renderRegionView();
+      case 'local':
+        return this.renderLocalView();
+      case 'scene':
+        return this.renderSceneView();
+      default:
+        return '<div class="map-placeholder">Invalid zoom level</div>';
+    }
+  }
+
+  renderRegionView() {
+    return `
+      <div class="region-view">
+        <h3>🗺️ World Overview</h3>
+        <p class="map-note">Region view coming soon - shows larger world structure</p>
+        <div class="current-location-card">
+          <h4>Current Location</h4>
+          <p><strong>${this.mapData.current_location.name}</strong></p>
+          <p class="coords">Grid: ${this.mapData.current_location.x}, ${this.mapData.current_location.y}, ${this.mapData.current_location.z}</p>
+        </div>
+      </div>
+    `;
+  }
+
+  renderLocalView() {
+    if (!this.mapData.connections || this.mapData.connections.length === 0) {
+      return `
+        <div class="local-view">
+          <div class="map-placeholder">
+            <p>No nearby locations discovered yet.</p>
+            <p class="hint">Explore the world to reveal connections!</p>
+          </div>
+        </div>
+      `;
+    }
+
+    // Radial layout for connections
+    const svg = this.createRadialGraph();
+    
+    return `
+      <div class="local-view">
+        ${svg}
+      </div>
+    `;
+  }
+
+  createRadialGraph() {
+    const width = 600;
+    const height = 500;
+    const centerX = width / 2;
+    const centerY = height / 2;
+    const radius = 180;
+
+    // Current location in center
+    const currentLoc = this.mapData.current_location;
+    const connections = this.mapData.connections || [];
+
+    // Calculate positions for connected locations
+    const angleStep = (2 * Math.PI) / Math.max(connections.length, 1);
+    const nodes = connections.map((conn, index) => {
+      const angle = angleStep * index - Math.PI / 2; // Start at top
+      return {
+        x: centerX + radius * Math.cos(angle),
+        y: centerY + radius * Math.sin(angle),
+        connection: conn
+      };
+    });
+
+    // Build SVG
+    let svgContent = `<svg width="${width}" height="${height}" class="map-graph">`;
+
+    // Draw connections (lines)
+    nodes.forEach(node => {
+      const opacity = node.connection.discovered ? 1 : 0.3;
+      const strokeDash = node.connection.discovered ? 'none' : '5,5';
+      svgContent += `
+        <line 
+          x1="${centerX}" 
+          y1="${centerY}" 
+          x2="${node.x}" 
+          y2="${node.y}" 
+          stroke="#666" 
+          stroke-width="2" 
+          stroke-dasharray="${strokeDash}"
+          opacity="${opacity}"
+        />
+      `;
+    });
+
+    // Draw current location (center node)
+    svgContent += `
+      <circle 
+        cx="${centerX}" 
+        cy="${centerY}" 
+        r="40" 
+        fill="#4CAF50" 
+        stroke="#fff" 
+        stroke-width="3"
+        class="location-node current"
+      />
+      <text 
+        x="${centerX}" 
+        y="${centerY - 50}" 
+        text-anchor="middle" 
+        fill="#fff" 
+        font-weight="bold"
+        font-size="14"
+      >
+        📍 You Are Here
+      </text>
+      <text 
+        x="${centerX}" 
+        y="${centerY + 60}" 
+        text-anchor="middle" 
+        fill="#ccc" 
+        font-size="12"
+      >
+        ${currentLoc.name}
+      </text>
+    `;
+
+    // Draw connected location nodes
+    nodes.forEach((node, index) => {
+      const conn = node.connection;
+      const opacity = conn.discovered ? 1 : 0.5;
+      const fill = conn.discovered ? '#2196F3' : '#666';
+      
+      svgContent += `
+        <circle 
+          cx="${node.x}" 
+          cy="${node.y}" 
+          r="30" 
+          fill="${fill}" 
+          stroke="#fff" 
+          stroke-width="2"
+          opacity="${opacity}"
+          class="location-node"
+          data-location="${conn.name}"
+          data-index="${index}"
+          style="cursor: pointer;"
+        />
+        <text 
+          x="${node.x}" 
+          y="${node.y + 45}" 
+          text-anchor="middle" 
+          fill="#ddd" 
+          font-size="12"
+          pointer-events="none"
+        >
+          ${conn.direction || ''}
+        </text>
+        <text 
+          x="${node.x}" 
+          y="${node.y + 60}" 
+          text-anchor="middle" 
+          fill="#fff" 
+          font-size="11"
+          pointer-events="none"
+        >
+          ${conn.name}
+        </text>
+        ${conn.distance ? `
+          <text 
+            x="${node.x}" 
+            y="${node.y + 75}" 
+            text-anchor="middle" 
+            fill="#999" 
+            font-size="10"
+            pointer-events="none"
+          >
+            ${conn.distance}
+          </text>
+        ` : ''}
+      `;
+    });
+
+    svgContent += '</svg>';
+    return svgContent;
+  }
+
+  renderSceneView() {
+    const pois = this.mapData.points_of_interest || [];
+    
+    if (pois.length === 0) {
+      return `
+        <div class="scene-view">
+          <div class="map-placeholder">
+            <p>No points of interest here.</p>
+            <p class="hint">Interact with the world to discover NPCs, objects, and landmarks!</p>
+          </div>
+        </div>
+      `;
+    }
+
+    const poiList = pois.map((poi, index) => {
+      const icon = this.getPoiIcon(poi.type);
+      return `
+        <div class="poi-card" data-poi-id="${poi.id}" data-poi-index="${index}">
+          <div class="poi-header">
+            <span class="poi-icon">${icon}</span>
+            <h4>${poi.name}</h4>
+          </div>
+          <p class="poi-description">${poi.description || 'No description available.'}</p>
+          ${poi.interaction_count ? `<p class="poi-meta">Interactions: ${poi.interaction_count}</p>` : ''}
+        </div>
+      `;
+    }).join('');
+
+    return `
+      <div class="scene-view">
+        <h3>🔍 Points of Interest</h3>
+        <div class="poi-list">
+          ${poiList}
+        </div>
+      </div>
+    `;
+  }
+
+  getPoiIcon(type) {
+    const icons = {
+      npc: '👤',
+      object: '📦',
+      landmark: '🏛️',
+      creature: '🐉',
+      item: '⚔️',
+      door: '🚪',
+      default: '📍'
+    };
+    return icons[type] || icons.default;
+  }
+
+  attachEventListeners() {
+    // Zoom tab clicks
+    const tabs = this.container.querySelectorAll('.zoom-tab');
+    tabs.forEach(tab => {
+      tab.addEventListener('click', () => {
+        this.currentZoom = tab.dataset.zoom;
+        this.render();
+      });
+    });
+
+    // Location node clicks (SVG)
+    const nodes = this.container.querySelectorAll('.location-node:not(.current)');
+    nodes.forEach(node => {
+      node.addEventListener('click', (e) => {
+        const locationName = e.target.dataset.location;
+        const index = parseInt(e.target.dataset.index);
+        this.showLocationActions(locationName, index);
+      });
+    });
+
+    // POI card clicks
+    const poiCards = this.container.querySelectorAll('.poi-card');
+    poiCards.forEach(card => {
+      card.addEventListener('click', () => {
+        const poiIndex = parseInt(card.dataset.poiIndex);
+        this.showPoiActions(poiIndex);
+      });
+    });
+
+    // Action panel close
+    const closeBtn = this.container.querySelector('#close-action-panel');
+    if (closeBtn) {
+      closeBtn.addEventListener('click', () => {
+        this.hideActionPanel();
+      });
+    }
+
+    // Custom action submit
+    const submitBtn = this.container.querySelector('#custom-action-submit');
+    const input = this.container.querySelector('#custom-action-input');
+    if (submitBtn && input) {
+      submitBtn.addEventListener('click', () => {
+        const action = input.value.trim();
+        if (action) {
+          this.executeAction(action);
+          input.value = '';
         }
-    }
-    
-    /**
-     * Load map data from API
-     */
-    async load() {
-        try {
-            const response = await fetch(`/api/plots/${this.plotId}/map`);
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}`);
-            }
-            this.currentData = await response.json();
-            this.render();
-        } catch (error) {
-            console.error('Error loading map data:', error);
-            this.container.innerHTML = '<p style="color: #999; padding: 20px;">Map data unavailable</p>';
+      });
+      input.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+          submitBtn.click();
         }
+      });
     }
+  }
+
+  showLocationActions(locationName, connectionIndex) {
+    const connection = this.mapData.connections[connectionIndex];
+    const panel = this.container.querySelector('#action-panel');
+    const title = this.container.querySelector('#action-panel-title');
+    const body = this.container.querySelector('#action-panel-body');
+
+    title.textContent = locationName;
+
+    const actions = [
+      { label: '🚶 Travel here', action: `Travel to ${locationName}` },
+      { label: '🔭 Scout ahead', action: `Scout ${locationName} from a distance` },
+      { label: '❓ Learn more', action: `What do I know about ${locationName}?` }
+    ];
+
+    if (!connection.discovered) {
+      actions.unshift({ label: '👁️ Investigate', action: `Investigate the path toward ${locationName}` });
+    }
+
+    body.innerHTML = actions.map(a => `
+      <button class="quick-action-btn" data-action="${a.action}">
+        ${a.label}
+      </button>
+    `).join('');
+
+    // Attach click handlers to new buttons
+    body.querySelectorAll('.quick-action-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        this.executeAction(btn.dataset.action);
+      });
+    });
+
+    panel.style.display = 'block';
+  }
+
+  showPoiActions(poiIndex) {
+    const poi = this.mapData.points_of_interest[poiIndex];
+    const panel = this.container.querySelector('#action-panel');
+    const title = this.container.querySelector('#action-panel-title');
+    const body = this.container.querySelector('#action-panel-body');
+
+    title.textContent = poi.name;
+
+    const actions = poi.suggested_actions || [
+      { label: '🔍 Examine', action: `Examine ${poi.name}` },
+      { label: '💬 Interact', action: `Interact with ${poi.name}` }
+    ];
+
+    body.innerHTML = actions.map(a => `
+      <button class="quick-action-btn" data-action="${a.action}">
+        ${a.label}
+      </button>
+    `).join('');
+
+    // Attach click handlers
+    body.querySelectorAll('.quick-action-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        this.executeAction(btn.dataset.action);
+      });
+    });
+
+    panel.style.display = 'block';
+  }
+
+  hideActionPanel() {
+    const panel = this.container.querySelector('#action-panel');
+    if (panel) {
+      panel.style.display = 'none';
+    }
+  }
+
+  async executeAction(actionText) {
+    this.hideActionPanel();
     
-    /**
-     * Main render function
-     */
-    render() {
-        if (!this.currentData) {
-            return;
-        }
-        
-        this.container.innerHTML = '';
-        
-        // Render zoom tabs
-        this.renderZoomTabs();
-        
-        // Render current zoom level
-        switch(this.currentZoom) {
-            case 'region':
-                this.renderRegionView();
-                break;
-            case 'local':
-                this.renderLocalView();
-                break;
-            case 'scene':
-                this.renderSceneView();
-                break;
-        }
+    // Trigger the main game action submission
+    if (window.submitAction) {
+      window.submitAction(actionText);
+    } else {
+      console.error('submitAction not found in global scope');
     }
-    
-    /**
-     * Render zoom level tabs
-     */
-    renderZoomTabs() {
-        const tabsDiv = document.createElement('div');
-        tabsDiv.id = 'map-zoom-tabs';
-        tabsDiv.innerHTML = `
-            <button class="zoom-tab ${this.currentZoom === 'local' ? 'active' : ''}" data-zoom="local">Local</button>
-            <button class="zoom-tab ${this.currentZoom === 'region' ? 'active' : ''}" data-zoom="region">Region</button>
-            <button class="zoom-tab ${this.currentZoom === 'scene' ? 'active' : ''}" data-zoom="scene">Scene</button>
-        `;
-        
-        tabsDiv.querySelectorAll('.zoom-tab').forEach(tab => {
-            tab.addEventListener('click', () => {
-                this.currentZoom = tab.dataset.zoom;
-                this.render();
-            });
-        });
-        
-        this.container.appendChild(tabsDiv);
-    }
-    
-    /**
-     * Region view - high level overview
-     */
-    renderRegionView() {
-        const viewDiv = document.createElement('div');
-        viewDiv.className = 'map-view region-view';
-        viewDiv.innerHTML = `
-            <div class="region-info">
-                <h3>${this.currentData.region || 'Unknown Region'}</h3>
-                ${this.currentData.settlement ? `<p>Settlement: ${this.currentData.settlement}</p>` : ''}
-                <p class="current-marker">📍 You are at: <strong>${this.currentData.current.name}</strong></p>
-            </div>
-        `;
-        this.container.appendChild(viewDiv);
-    }
-    
-    /**
-     * Local view - connected locations (main interactive map)
-     */
-    renderLocalView() {
-        const viewDiv = document.createElement('div');
-        viewDiv.className = 'map-view local-view';
-        
-        // Create SVG container
-        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-        svg.setAttribute('width', '100%');
-        svg.setAttribute('height', '350');
-        svg.setAttribute('viewBox', '-200 -175 400 350');
-        
-        // Calculate node positions
-        const nodes = this.calculateNodePositions();
-        
-        // Render connection lines first (so they're behind nodes)
-        nodes.forEach(node => {
-            if (node.isCenter) return; // Center node has no parent line
-            
-            const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-            line.setAttribute('x1', 0);
-            line.setAttribute('y1', 0);
-            line.setAttribute('x2', node.x);
-            line.setAttribute('y2', node.y);
-            line.setAttribute('stroke', node.discovered ? '#666' : '#444');
-            line.setAttribute('stroke-width', '2');
-            line.setAttribute('stroke-dasharray', node.discovered ? '0' : '5,5');
-            svg.appendChild(line);
-        });
-        
-        // Render nodes
-        nodes.forEach(node => {
-            const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-            group.setAttribute('transform', `translate(${node.x}, ${node.y})`);
-            group.style.cursor = 'pointer';
-            
-            // Circle
-            const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-            circle.setAttribute('r', node.isCenter ? '20' : '15');
-            circle.setAttribute('fill', node.isCenter ? '#FFD700' : '#4a4a4a');
-            circle.setAttribute('stroke', node.isCenter ? '#FFF' : '#666');
-            circle.setAttribute('stroke-width', node.isCenter ? '3' : '2');
-            circle.setAttribute('opacity', node.discovered ? '1' : '0.4');
-            
-            // Hover effect
-            group.addEventListener('mouseenter', () => {
-                circle.setAttribute('fill', node.isCenter ? '#FFE44D' : '#5a5a5a');
-            });
-            group.addEventListener('mouseleave', () => {
-                circle.setAttribute('fill', node.isCenter ? '#FFD700' : '#4a4a4a');
-            });
-            
-            // Click handler
-            group.addEventListener('click', () => {
-                this.selectNode(node);
-            });
-            
-            group.appendChild(circle);
-            
-            // Label
-            const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-            text.setAttribute('y', '35');
-            text.setAttribute('text-anchor', 'middle');
-            text.setAttribute('fill', '#ddd');
-            text.setAttribute('font-size', '12');
-            text.textContent = node.name.length > 15 ? node.name.substring(0, 12) + '...' : node.name;
-            group.appendChild(text);
-            
-            svg.appendChild(group);
-        });
-        
-        viewDiv.appendChild(svg);
-        this.container.appendChild(viewDiv);
-    }
-    
-    /**
-     * Calculate positions for nodes in a radial layout
-     */
-    calculateNodePositions() {
-        const nodes = [];
-        const connections = this.currentData.current.connections || [];
-        
-        // Center node (current location)
-        nodes.push({
-            name: this.currentData.current.name,
-            x: 0,
-            y: 0,
-            isCenter: true,
-            discovered: true,
-            type: 'location',
-            data: this.currentData.current
-        });
-        
-        // Connected locations
-        const angleStep = (2 * Math.PI) / Math.max(connections.length, 1);
-        connections.forEach((conn, index) => {
-            const angle = angleStep * index;
-            const radius = conn.distance === 'far' ? 120 : conn.distance === 'close' ? 90 : 70;
-            
-            nodes.push({
-                name: conn.name,
-                x: Math.cos(angle) * radius,
-                y: Math.sin(angle) * radius,
-                isCenter: false,
-                discovered: conn.discovered !== false,
-                type: 'location',
-                data: conn
-            });
-        });
-        
-        return nodes;
-    }
-    
-    /**
-     * Scene view - POIs in current location
-     */
-    renderSceneView() {
-        const viewDiv = document.createElement('div');
-        viewDiv.className = 'map-view scene-view';
-        
-        const pois = this.currentData.current.points_of_interest || [];
-        
-        if (pois.length === 0) {
-            viewDiv.innerHTML = '<p style="color: #999; padding: 20px;">No points of interest discovered yet</p>';
-        } else {
-            viewDiv.innerHTML = '<div class="poi-list"></div>';
-            const poiList = viewDiv.querySelector('.poi-list');
-            
-            pois.forEach(poi => {
-                const poiCard = document.createElement('div');
-                poiCard.className = 'poi-card';
-                poiCard.innerHTML = `
-                    <div class="poi-header">
-                        <span class="poi-icon">${poi.icon || '📍'}</span>
-                        <span class="poi-name">${poi.name}</span>
-                        <span class="poi-type">${poi.type}</span>
-                    </div>
-                    ${poi.description ? `<p class="poi-description">${poi.description}</p>` : ''}
-                `;
-                
-                poiCard.addEventListener('click', () => {
-                    this.selectPOI(poi);
-                });
-                
-                poiList.appendChild(poiCard);
-            });
-        }
-        
-        this.container.appendChild(viewDiv);
-    }
-    
-    /**
-     * Handle node selection (location clicked)
-     */
-    selectNode(node) {
-        this.selectedNode = node;
-        this.showActionPanel('location', node);
-    }
-    
-    /**
-     * Handle POI selection
-     */
-    selectPOI(poi) {
-        this.showActionPanel('poi', poi);
-    }
-    
-    /**
-     * Show action panel with quick actions and custom input
-     */
-    showActionPanel(type, data) {
-        // Remove existing panel if any
-        const existingPanel = document.getElementById('map-action-panel');
-        if (existingPanel) {
-            existingPanel.remove();
-        }
-        
-        const panel = document.createElement('div');
-        panel.id = 'map-action-panel';
-        panel.className = 'action-panel';
-        
-        if (type === 'location') {
-            panel.innerHTML = this.renderLocationPanel(data);
-        } else if (type === 'poi') {
-            panel.innerHTML = this.renderPOIPanel(data);
-        }
-        
-        this.container.appendChild(panel);
-        
-        // Attach event listeners
-        this.attachPanelListeners();
-    }
-    
-    /**
-     * Render location action panel
-     */
-    renderLocationPanel(location) {
-        const isCurrent = location.isCenter;
-        
-        return `
-            <button class="close-panel" onclick="mapViewer.closePanel()">×</button>
-            <h4>📍 ${location.name}</h4>
-            ${location.data.description ? `<p class="panel-description">${location.data.description}</p>` : ''}
-            
-            <div class="quick-actions">
-                ${!isCurrent && location.discovered ? `
-                    <button class="action-btn" data-action="travel" data-target="${location.name}">
-                        🚶 Travel to ${location.name}
-                    </button>
-                ` : ''}
-                ${isCurrent ? '<p><em>📍 You are here</em></p>' : ''}
-                
-                ${location.discovered ? `
-                    <button class="action-btn" data-action="info" data-target="${location.name}">
-                        ℹ️ Learn more
-                    </button>
-                ` : ''}
-                
-                ${!isCurrent ? `
-                    <button class="action-btn" data-action="scout" data-target="${location.name}">
-                        🔍 Scout ahead
-                    </button>
-                ` : ''}
-            </div>
-            
-            <div class="custom-action">
-                <label>✨ Custom action:</label>
-                <input type="text" 
-                       class="custom-input" 
-                       placeholder="Type your own action..."
-                       data-target="${location.name}"
-                       data-type="location">
-                <button class="custom-submit" data-target="${location.name}" data-type="location">
-                    Do it
-                </button>
-            </div>
-        `;
-    }
-    
-    /**
-     * Render POI action panel
-     */
-    renderPOIPanel(poi) {
-        const suggestedActions = poi.suggested_actions || [];
-        
-        return `
-            <button class="close-panel" onclick="mapViewer.closePanel()">×</button>
-            <h4>${poi.icon || '📍'} ${poi.name}</h4>
-            <span class="poi-type-badge">${poi.type}</span>
-            ${poi.description ? `<p class="panel-description">${poi.description}</p>` : ''}
-            
-            ${poi.interacted ? `<p class="interaction-note">✓ You've interacted with this before</p>` : ''}
-            
-            <div class="quick-actions">
-                ${suggestedActions.map(action => `
-                    <button class="action-btn" 
-                            data-action="poi-action" 
-                            data-prompt="${action.prompt}"
-                            data-poi-id="${poi.poi_id}">
-                        ${action.icon} ${action.label}
-                    </button>
-                `).join('')}
-            </div>
-            
-            <div class="custom-action">
-                <label>✨ Custom action:</label>
-                <input type="text" 
-                       class="custom-input" 
-                       placeholder="Do something with ${poi.name}..."
-                       data-target="${poi.name}"
-                       data-poi-id="${poi.poi_id}"
-                       data-type="poi">
-                <button class="custom-submit" 
-                        data-target="${poi.name}" 
-                        data-poi-id="${poi.poi_id}"
-                        data-type="poi">
-                    Do it
-                </button>
-            </div>
-        `;
-    }
-    
-    /**
-     * Attach event listeners to action panel buttons
-     */
-    attachPanelListeners() {
-        // Quick action buttons
-        document.querySelectorAll('.action-btn').forEach(btn => {
-            btn.addEventListener('click', async () => {
-                const action = btn.dataset.action;
-                const target = btn.dataset.target;
-                const prompt = btn.dataset.prompt;
-                const poiId = btn.dataset.poiId;
-                
-                await this.executeQuickAction(action, target, prompt, poiId);
-            });
-        });
-        
-        // Custom action submit
-        document.querySelectorAll('.custom-submit').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const type = btn.dataset.type;
-                const target = btn.dataset.target;
-                const poiId = btn.dataset.poiId;
-                const input = btn.previousElementSibling;
-                
-                if (input && input.value.trim()) {
-                    this.executeCustomAction(type, target, input.value.trim(), poiId);
-                }
-            });
-        });
-        
-        // Custom action on Enter key
-        document.querySelectorAll('.custom-input').forEach(input => {
-            input.addEventListener('keypress', (e) => {
-                if (e.key === 'Enter') {
-                    const type = input.dataset.type;
-                    const target = input.dataset.target;
-                    const poiId = input.dataset.poiId;
-                    
-                    if (input.value.trim()) {
-                        this.executeCustomAction(type, target, input.value.trim(), poiId);
-                    }
-                }
-            });
-        });
-    }
-    
-    /**
-     * Execute quick action
-     */
-    async executeQuickAction(actionType, target, prompt, poiId) {
-        try {
-            const response = await fetch(`/api/plots/${this.plotId}/quick-action`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    actionType,
-                    target,
-                    customPrompt: prompt,
-                    poi_id: poiId
-                })
-            });
-            
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
-            
-            const data = await response.json();
-            this.submitToChat(data.prompt);
-        } catch (error) {
-            console.error('Error executing quick action:', error);
-        }
-    }
-    
-    /**
-     * Execute custom action
-     */
-    async executeCustomAction(type, target, userInput, poiId) {
-        const actionType = type === 'poi' ? 'poi-custom' : 'location-custom';
-        
-        try {
-            const response = await fetch(`/api/plots/${this.plotId}/quick-action`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    actionType,
-                    target,
-                    customPrompt: userInput,
-                    poi_id: poiId
-                })
-            });
-            
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
-            
-            const data = await response.json();
-            this.submitToChat(data.prompt);
-        } catch (error) {
-            console.error('Error executing custom action:', error);
-        }
-    }
-    
-    /**
-     * Submit action to main chat input and trigger submission
-     */
-    submitToChat(prompt) {
-        // Close action panel
-        this.closePanel();
-        
-        // Inject into main chat input
-        const chatBox = document.getElementById('chat-box');
-        if (chatBox) {
-            chatBox.value = prompt;
-            
-            // Trigger the main submit function
-            if (typeof submitAction === 'function') {
-                submitAction();
-            } else {
-                // Fallback: trigger submit button click
-                const submitBtn = document.getElementById('submit-btn');
-                if (submitBtn) submitBtn.click();
-            }
-        }
-    }
-    
-    /**
-     * Close action panel
-     */
-    closePanel() {
-        const panel = document.getElementById('map-action-panel');
-        if (panel) {
-            panel.remove();
-        }
-        this.selectedNode = null;
-    }
+  }
+
+  async refresh() {
+    await this.fetchMapData();
+    this.render();
+  }
 }
 
-// Global instance (will be initialized in app.js)
-let mapViewer = null;
+// Export for use in app.js
+window.MapViewer = MapViewer;

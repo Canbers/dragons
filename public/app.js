@@ -499,80 +499,122 @@ async function fetchGameInfo(plotId, characterId) {
         return key ? iconMap[key] : defaultIcon;
     };
 
-    // Update prominent time display in chat header
+    // Update header displays
     const timeDisplay = document.getElementById('time-display');
     if (timeDisplay) {
         timeDisplay.textContent = `${getIcon(currentTime, timeIcons, '⏰')} ${currentTime || 'Unknown'}`;
     }
 
-    document.getElementById('game-info').innerHTML = `
-        <h2>Current State</h2>
-        <div class="state-grid">
-            <div class="state-item">
-                <span class="state-icon">${activityIcons[currentActivity] || '🧭'}</span>
-                <span class="state-label">Activity</span>
-                <span class="state-value">${currentActivity}</span>
+    // Update context bar (new UI)
+    const locationContext = document.getElementById('location-context');
+    const activityContext = document.getElementById('activity-context');
+    const conditionsContext = document.getElementById('conditions-context');
+    
+    if (locationContext) locationContext.textContent = `📍 ${currentLocation}`;
+    if (activityContext) activityContext.textContent = `${activityIcons[currentActivity] || '🧭'} ${currentActivity}`;
+    if (conditionsContext) conditionsContext.textContent = `${getIcon(currentConditions, conditionIcons, '🌤️')} ${currentConditions}`;
+
+    // Update health in header
+    const healthDisplay = document.getElementById('health-display');
+    if (healthDisplay && character) {
+        const healthPercent = Math.min(100, Math.max(0, character.currentStatus.health));
+        const healthColor = healthPercent > 60 ? '#4CAF50' : healthPercent > 30 ? '#ff9800' : '#f44336';
+        healthDisplay.textContent = `❤️ ${character.currentStatus.health}`;
+        healthDisplay.style.color = healthColor;
+    }
+
+    // Keep legacy game-info for backward compatibility (hidden by CSS)
+    const gameInfo = document.getElementById('game-info');
+    if (gameInfo) {
+        gameInfo.innerHTML = `
+            <h2>Current State</h2>
+            <div class="state-grid">
+                <div class="state-item">
+                    <span class="state-icon">${activityIcons[currentActivity] || '🧭'}</span>
+                    <span class="state-label">Activity</span>
+                    <span class="state-value">${currentActivity}</span>
+                </div>
+                <div class="state-item">
+                    <span class="state-icon">${getIcon(currentTime, timeIcons, '⏰')}</span>
+                    <span class="state-label">Time</span>
+                    <span class="state-value">${currentTime}</span>
+                </div>
+                <div class="state-item">
+                    <span class="state-icon">${getIcon(currentConditions, conditionIcons, '🌤️')}</span>
+                    <span class="state-label">Conditions</span>
+                    <span class="state-value">${currentConditions}</span>
+                </div>
             </div>
-            <div class="state-item">
-                <span class="state-icon">${getIcon(currentTime, timeIcons, '⏰')}</span>
-                <span class="state-label">Time</span>
-                <span class="state-value">${currentTime}</span>
+            <div class="location-box">
+                <h3>📍 ${currentLocation}</h3>
+                <p>${currentLocationDescription}</p>
             </div>
-            <div class="state-item">
-                <span class="state-icon">${getIcon(currentConditions, conditionIcons, '🌤️')}</span>
-                <span class="state-label">Conditions</span>
-                <span class="state-value">${currentConditions}</span>
-            </div>
-        </div>
-        <div class="location-box">
-            <h3>📍 ${currentLocation}</h3>
-            <p>${currentLocationDescription}</p>
-        </div>
-    `;
+        `;
+    }
 
 
         // Display character information in the UI
         const healthPercent = Math.min(100, Math.max(0, character.currentStatus.health));
         const manaPercent = Math.min(100, Math.max(0, character.currentStatus.mana));
-        const healthColor = healthPercent > 60 ? '#4CAF50' : healthPercent > 30 ? '#ff9800' : '#f44336';
         
-        document.getElementById('character-details').innerHTML = `
-            <h3>Character Details</h3>
-            <div class="section-content">
-                <p><strong>${character.name}</strong></p>
-                <p>${character.race} ${character.class}, Age ${character.age}</p>
-                
-                <div class="stat-bars">
-                    <div class="stat-bar-container">
-                        <span class="stat-label">❤️ Health</span>
-                        <div class="stat-bar">
-                            <div class="stat-bar-fill health" style="width: ${healthPercent}%; background-color: ${healthColor};"></div>
+        // Update new glanceable character panel
+        const charName = document.getElementById('character-name');
+        const charClass = document.getElementById('character-class');
+        const charLevel = document.getElementById('character-level');
+        const healthBar = document.getElementById('health-bar');
+        const healthValue = document.getElementById('health-value');
+        const manaBar = document.getElementById('mana-bar');
+        const manaValue = document.getElementById('mana-value');
+        
+        if (charName) charName.textContent = character.name;
+        if (charClass) charClass.textContent = character.class;
+        if (charLevel) charLevel.textContent = `Level ${character.level || 1}`;
+        if (healthBar) healthBar.style.width = `${healthPercent}%`;
+        if (healthValue) healthValue.textContent = `${character.currentStatus.health}/${character.maxStatus?.health || 100}`;
+        if (manaBar) manaBar.style.width = `${manaPercent}%`;
+        if (manaValue) manaValue.textContent = `${character.currentStatus.mana}/${character.maxStatus?.mana || 100}`;
+        
+        // Keep legacy character-details for full sheet modal
+        const characterDetailsEl = document.getElementById('character-details');
+        if (characterDetailsEl) {
+            const healthColor = healthPercent > 60 ? '#4CAF50' : healthPercent > 30 ? '#ff9800' : '#f44336';
+            characterDetailsEl.innerHTML = `
+                <h3>Character Details</h3>
+                <div class="section-content">
+                    <p><strong>${character.name}</strong></p>
+                    <p>${character.race} ${character.class}, Age ${character.age}</p>
+                    
+                    <div class="stat-bars">
+                        <div class="stat-bar-container">
+                            <span class="stat-label">❤️ Health</span>
+                            <div class="stat-bar">
+                                <div class="stat-bar-fill health" style="width: ${healthPercent}%; background-color: ${healthColor};"></div>
+                            </div>
+                            <span class="stat-value">${character.currentStatus.health}</span>
                         </div>
-                        <span class="stat-value">${character.currentStatus.health}</span>
+                        <div class="stat-bar-container">
+                            <span class="stat-label">💙 Mana</span>
+                            <div class="stat-bar">
+                                <div class="stat-bar-fill mana" style="width: ${manaPercent}%;"></div>
+                            </div>
+                            <span class="stat-value">${character.currentStatus.mana}</span>
+                        </div>
                     </div>
-                    <div class="stat-bar-container">
-                        <span class="stat-label">💙 Mana</span>
-                        <div class="stat-bar">
-                            <div class="stat-bar-fill mana" style="width: ${manaPercent}%;"></div>
-                        </div>
-                        <span class="stat-value">${character.currentStatus.mana}</span>
+                    
+                    <div class="stats-grid">
+                        <div class="stat-item">💪 STR<br><strong>${character.stats.strength}</strong></div>
+                        <div class="stat-item">🧠 INT<br><strong>${character.stats.intelligence}</strong></div>
+                        <div class="stat-item">⚡ AGI<br><strong>${character.stats.agility}</strong></div>
                     </div>
                 </div>
-                
-                <div class="stats-grid">
-                    <div class="stat-item">💪 STR<br><strong>${character.stats.strength}</strong></div>
-                    <div class="stat-item">🧠 INT<br><strong>${character.stats.intelligence}</strong></div>
-                    <div class="stat-item">⚡ AGI<br><strong>${character.stats.agility}</strong></div>
+                <h3>Inventory:</h3>
+                <div class="section-content inventory-list">
+                    ${character.inventory.length > 0 
+                        ? character.inventory.map(item => `<span class="inventory-item">🎒 ${item.itemName} (x${item.quantity})</span>`).join('') 
+                        : '<em>Empty</em>'}
                 </div>
-            </div>
-            <h3>Inventory:</h3>
-            <div class="section-content inventory-list">
-                ${character.inventory.length > 0 
-                    ? character.inventory.map(item => `<span class="inventory-item">🎒 ${item.itemName} (x${item.quantity})</span>`).join('') 
-                    : '<em>Empty</em>'}
-            </div>
-        `;
-        characterDetails.style.display = 'block';
+            `;
+        }
     }
 
     async function getTileTypeAtCoordinates(plot, coordinates) {

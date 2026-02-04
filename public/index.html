@@ -24,55 +24,92 @@
 </div>
 
 <div id="main-container">
-    <!-- Character Sheet Section -->
-    <div id="character-sheet">
-        <h2>Character Sheet</h2>
-        <div id="character-details" style="display: none;"></div>
+    <!-- LEFT COLUMN: Game Log (Primary) -->
+    <div id="game-log-column">
+        <!-- Header Bar -->
+        <div id="game-header">
+            <h1 id="world-name">🐉 Dragons</h1>
+            <div id="header-status">
+                <span id="time-display">⏰ --</span>
+                <span id="health-display">❤️ --</span>
+            </div>
+        </div>
+
+        <!-- Chat/Log Section -->
+        <div id="chat-section">
+            <div id="game-log"></div>
+            
+            <!-- Context Bar -->
+            <div id="context-bar">
+                <span id="location-context">📍 --</span>
+                <span id="activity-context">⚔️ --</span>
+                <span id="conditions-context">🌤️ --</span>
+            </div>
+            
+            <!-- Quick Actions -->
+            <div id="quick-actions">
+                <button class="quick-action" data-action="I look around carefully" data-type="action">👀 Look</button>
+                <button class="quick-action" data-action="I approach someone nearby and greet them" data-type="speak">💬 Talk</button>
+                <button class="quick-action" data-action="I check my belongings and inventory" data-type="action">🎒 Inv</button>
+                <button class="quick-action" data-action="I find a safe spot to rest and catch my breath" data-type="action">💤 Rest</button>
+            </div>
+            
+            <!-- Input Area -->
+            <div id="input-area">
+                <div id="input-selector">
+                    <label><input type="radio" name="inputType" value="action" checked> Action</label>
+                    <label><input type="radio" name="inputType" value="speak"> Speak</label>
+                    <label><input type="radio" name="inputType" value="askGM"> Ask GM</label>
+                </div>
+                <div id="input-row">
+                    <input id="chat-box" type="text" placeholder="What do you do?">
+                    <button id="submit-btn">→</button>
+                </div>
+            </div>
+        </div>
     </div>
 
-    <!-- Chat Section -->
-    <div id="chat-section">
-        <div id="chat-header">
-            <h2>Game Log</h2>
-            <span id="time-display">⏰ --</span>
-        </div>
-        <div id="game-log"></div>
-        <div id="input-selector">
-            <label><input type="radio" name="inputType" value="action" checked> Action</label>
-            <label><input type="radio" name="inputType" value="speak"> Speak</label>
-            <label><input type="radio" name="inputType" value="askGM"> Ask GM</label>
-        </div>
-        <div id="quick-actions">
-            <button class="quick-action" data-action="I look around carefully" data-type="action">👀 Look Around</button>
-            <button class="quick-action" data-action="I approach someone nearby and greet them" data-type="speak">💬 Talk to NPC</button>
-            <button class="quick-action" data-action="I check my belongings and inventory" data-type="action">🎒 Check Inventory</button>
-            <button class="quick-action" data-action="I find a safe spot to rest and catch my breath" data-type="action">💤 Rest</button>
-        </div>
-        <input id="chat-box" type="text" placeholder="Type your message...">
-        <button id="submit-btn">Submit</button>
-    </div>
-
-    <!-- Game Info and Map Section -->
-    <div id="game-info-map-container">
-        <!-- Game Info Section (content gets replaced by JS) -->
-        <div id="game-info">
-            <h2>Game Info</h2>
-            <p>Game information will be displayed here.</p>
-        </div>
-        
-        <!-- Game Action Buttons (OUTSIDE game-info so they persist) -->
-        <div id="game-buttons">
-            <button id="start-game-btn">Start Game</button>
-            <button id="view-quests-btn">📜 View Quests</button>
-            <button id="reputation-btn">🤝 Reputation</button>
-            <button id="story-summary-btn">📖 Story So Far</button>
-            <button id="settings-btn">⚙️ Settings</button>
-        </div>
-        
-        <!-- Map Section -->
+    <!-- RIGHT COLUMN: Sidebar (Map + Character) -->
+    <div id="sidebar-column">
+        <!-- Map Section (Top) -->
         <div id="map-section">
-            <h2>Map</h2>
+            <h3>🗺️ World Map</h3>
             <div id="map-viewer-container"></div>
+        </div>
+        
+        <!-- Character Panel (Bottom - Glanceable) -->
+        <div id="character-panel">
+            <h3>👤 Character</h3>
+            <div id="character-glance">
+                <div id="character-name">--</div>
+                <div id="character-stats">
+                    <div class="stat-bar-mini">
+                        <span class="stat-icon">❤️</span>
+                        <div class="stat-bar-bg"><div id="health-bar" class="stat-bar-fill health"></div></div>
+                        <span id="health-value">--</span>
+                    </div>
+                    <div class="stat-bar-mini">
+                        <span class="stat-icon">💙</span>
+                        <div class="stat-bar-bg"><div id="mana-bar" class="stat-bar-fill mana"></div></div>
+                        <span id="mana-value">--</span>
+                    </div>
+                </div>
+                <div id="character-quick-info">
+                    <span id="character-class">--</span> • <span id="character-level">--</span>
+                </div>
+                <button id="expand-character-btn">📋 Full Sheet</button>
+            </div>
+            <!-- Full character sheet (hidden by default) -->
+            <div id="character-details" style="display: none;"></div>
+        </div>
+        
+        <!-- Game Buttons -->
+        <div id="game-buttons">
+            <button id="start-game-btn">▶️ Start</button>
+            <button id="view-quests-btn">📜 Quests</button>
+            <button id="reputation-btn">🤝 Rep</button>
+            <button id="story-summary-btn">📖 Story</button>
+            <button id="settings-btn">⚙️</button>
         </div>
     </div>
 </div>
