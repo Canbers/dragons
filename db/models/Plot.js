@@ -37,14 +37,22 @@ const Plot = new Schema(
                     type: mongoose.Schema.Types.ObjectId,
                     ref: 'Settlement'
                 },
+                // Location within settlement (references Settlement.locations[]._id)
+                // This is the canonical "where is the player" field
+                locationId: {
+                    type: mongoose.Schema.Types.ObjectId,
+                    default: null
+                },
                 coordinates: {
-                    type: [Number], // [x, y] coordinates
+                    type: [Number], // [x, y] coordinates on region map
                     default: [0, 0]
                 },
+                // DEPRECATED: Use locationId instead. Kept for backward compatibility.
                 locationName: {
                     type: String,
                     default: ''
                 },
+                // DEPRECATED: Location description now comes from Settlement.locations[]
                 locationDescription: {
                     type: String,
                     default: ''

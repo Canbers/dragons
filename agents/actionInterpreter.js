@@ -6,6 +6,8 @@ const Settlement = require('../db/models/Settlement');
 const regionFactory = require('../agents/world/factories/regionsFactory');
 const settlementsFactory = require('../agents/world/factories/settlementsFactory');
 const { prompt, simplePrompt, streamPrompt, GAME_MODEL } = require('../services/gptService');
+const movementService = require('../services/movementService');
+const discoveryService = require('../services/discoveryService');
 
 // Load environment variables
 require('dotenv').config();
@@ -60,6 +62,109 @@ const getRecentMessages = async (plotId, limit = 20, cookies) => {
         console.error(`Error fetching recent messages: ${error.message}`);
         throw error;
     }
+};
+
+/**
+ * Build rich location context for AI prompts
+ * This is the canonical way to tell the AI "where is the player"
+ */
+const buildLocationContext = async (plot) => {
+    const settlement = plot.current_state?.current_location?.settlement;
+    const region = plot.current_state?.current_location?.region;
+    
+    if (!settlement?.locations?.length) {
+        // Wilderness or no settlement
+        return `
+CURRENT LOCATION: Wilderness
+Region: ${region?.name || 'Unknown'}
+${region?.description || 'Open terrain.'}
+- You are traveling through unsettled lands.
+`.trim();
+    }
+    
+    // Find current location by locationId (preferred) or locationName (fallback)
+    const locationId = plot.current_state.current_location.locationId;
+    const locationName = plot.current_state.current_location.locationName;
+    
+    let currentLoc = null;
+    if (locationId) {
+        currentLoc = settlement.locations.find(l => 
+            l._id.toString() === locationId.toString()
+        );
+    }
+    if (!currentLoc && locationName) {
+        currentLoc = settlement.locations.find(l => 
+            l.name.toLowerCase() === locationName.toLowerCase()
+        );
+    }
+    if (!currentLoc) {
+        currentLoc = settlement.locations.find(l => l.isStartingLocation) 
+                  || settlement.locations[0];
+    }
+    
+    if (!currentLoc) {
+        return `
+CURRENT LOCATION: ${settlement.name || 'Unknown Settlement'}
+${settlement.description || 'A settlement.'}
+`.trim();
+    }
+    
+    // Build connections list with descriptions
+    const connections = (currentLoc.connections || []).map(conn => {
+        const targetLoc = settlement.locations.find(l => 
+            l.name.toLowerCase() === conn.locationName?.toLowerCase()
+        );
+        const discovered = targetLoc?.discovered ? '' : ' (unexplored)';
+        const via = conn.description ? ` — ${conn.description}` : '';
+        return `  ${conn.direction || '•'}: ${conn.locationName}${via}${discovered}`;
+    }).join('\n');
+    
+    // Build POIs list (only discovered ones)
+    const pois = (currentLoc.pois || [])
+        .filter(p => p.discovered)
+        .map(p => {
+            const typeLabel = {
+                'npc': '👤 Person',
+                'object': '📦 Object',
+                'entrance': '🚪 Exit',
+                'landmark': '🏛️ Feature',
+                'danger': '⚠️ Danger',
+                'quest': '❗ Important',
+                'shop': '🛒 Shop',
+                'other': '• Point of Interest'
+            }[p.type] || '• Item';
+            return `  ${typeLabel}: ${p.name}${p.description ? ` — ${p.description.substring(0, 50)}` : ''}`;
+        }).join('\n');
+    
+    // Location type context
+    const typeContext = {
+        'tavern': 'A place for food, drink, and gossip.',
+        'market': 'A busy trading area. Merchants and crowds.',
+        'temple': 'A sacred space. Quiet and reverent.',
+        'gate': 'An entry point. Guards may be present.',
+        'plaza': 'An open public space.',
+        'shop': 'A place of commerce.',
+        'residence': 'Private dwellings.',
+        'landmark': 'A notable location.',
+        'dungeon': 'A dangerous underground area.',
+        'docks': 'Near water. Ships and sailors.',
+        'barracks': 'Military presence.',
+        'palace': 'Seat of power. Formal and guarded.'
+    }[currentLoc.type] || '';
+    
+    return `
+CURRENT LOCATION: ${currentLoc.name} (${currentLoc.type || 'location'})
+In: ${settlement.name}
+${currentLoc.description || settlement.description || ''}
+${typeContext ? `[${typeContext}]` : ''}
+
+EXITS/CONNECTIONS:
+${connections || '  (none discovered yet)'}
+
+${pois ? `NOTABLE THINGS HERE:\n${pois}` : 'Nothing of note discovered here yet.'}
+
+IMPORTANT: The player is AT "${currentLoc.name}". Any movement to a different location should describe leaving this place.
+`.trim();
 };
 
 const ensureDescription = async (regionId, settlementId) => {
@@ -478,65 +583,45 @@ Respond in JSON:
 
 /**
  * Update the plot's current state based on action results
+ * Uses simple heuristics instead of AI to avoid latency
  */
 const updateCurrentState = async (plot, input, result) => {
     try {
-        const stateUpdateMessage = `
-Based on this action and result, determine any state changes:
-
-Previous State:
-- Activity: ${plot.current_state?.current_activity || 'exploring'}
-- Time: ${plot.current_state?.current_time || 'Unknown'}
-- Conditions: ${plot.current_state?.environment_conditions || 'Normal'}
-- Mood: ${plot.current_state?.mood_tone || 'Neutral'}
-
-Action: "${input}"
-Result: ${result.outcome}
-Consequence Level: ${result.consequence_level || 'minor'}
-
-Respond in JSON:
-{
-    "activity": "new activity (conversation|exploring|in combat|resting|traveling)",
-    "time": "new time of day if changed (dawn|morning|midday|afternoon|evening|night|midnight)",
-    "conditions": "new environmental conditions if changed",
-    "mood": "new mood/tone if changed",
-    "location_description": "updated location description if changed"
-}
-
-IMPORTANT:
-- If the player is resting or sleeping "until morning" (or similar), advance time to 'morning'.
-- If they are resting for a short while, advance time to the next logical step (e.g., evening -> night).
-- Only change values that would logically change based on the action.
-`.trim();
-
-        const response = await simplePrompt(GAME_MODEL, 
-            "You determine game state changes based on player actions and their consequences.", 
-            stateUpdateMessage
-        );
+        const lowerInput = input.toLowerCase();
+        const lowerOutcome = (result.outcome || '').toLowerCase();
         
-        const stateChanges = JSON.parse(response.content);
+        // Detect activity changes from keywords
+        let newActivity = null;
+        if (lowerInput.includes('talk') || lowerInput.includes('speak') || lowerInput.includes('ask') || lowerInput.includes('say')) {
+            newActivity = 'conversation';
+        } else if (lowerInput.includes('rest') || lowerInput.includes('sleep') || lowerInput.includes('camp')) {
+            newActivity = 'resting';
+        } else if (lowerInput.includes('attack') || lowerInput.includes('fight') || lowerOutcome.includes('combat') || lowerOutcome.includes('battle')) {
+            newActivity = 'in combat';
+        } else if (lowerInput.includes('travel') || lowerInput.includes('journey') || lowerInput.includes('head to')) {
+            newActivity = 'traveling';
+        } else if (plot.current_state.current_activity === 'resting' || plot.current_state.current_activity === 'conversation') {
+            // Return to exploring after resting or conversation ends
+            newActivity = 'exploring';
+        }
         
-        // Validate and apply changes
-        const allowedActivities = ['conversation', 'exploring', 'in combat', 'resting', 'traveling'];
+        if (newActivity && newActivity !== plot.current_state.current_activity) {
+            plot.current_state.current_activity = newActivity;
+        }
         
-        if (stateChanges.activity && allowedActivities.includes(stateChanges.activity)) {
-            plot.current_state.current_activity = stateChanges.activity;
-        }
-        if (stateChanges.time) {
-            plot.current_state.current_time = stateChanges.time;
-        }
-        if (stateChanges.conditions) {
-            plot.current_state.environment_conditions = stateChanges.conditions;
-        }
-        if (stateChanges.mood) {
-            plot.current_state.mood_tone = stateChanges.mood;
-        }
-        if (stateChanges.location_description && plot.current_state.current_location) {
-            plot.current_state.current_location.description = stateChanges.location_description;
+        // Handle time advancement for rest
+        if (lowerInput.includes('sleep') || lowerInput.includes('rest until morning') || lowerInput.includes('sleep until')) {
+            plot.current_state.current_time = 'morning';
+        } else if (lowerInput.includes('wait') || lowerInput.includes('pass time')) {
+            // Advance time one step
+            const timeOrder = ['dawn', 'morning', 'midday', 'afternoon', 'evening', 'night', 'midnight'];
+            const currentIdx = timeOrder.indexOf(plot.current_state.current_time);
+            if (currentIdx >= 0 && currentIdx < timeOrder.length - 1) {
+                plot.current_state.current_time = timeOrder[currentIdx + 1];
+            }
         }
 
         await plot.save();
-        console.log("Updated current state:", plot.current_state);
     } catch (error) {
         console.error('Error updating current state:', error);
     }
@@ -649,29 +734,62 @@ ${historyContext}
         const tone = plot.settings?.tone || 'classic';
         const difficulty = plot.settings?.difficulty || 'casual';
 
-        // Get current location context from settlement
-        const settlement = plot.current_state.current_location.settlement;
-        const currentLocationName = plot.current_state.current_location.locationName;
-        let locationContext = '';
+        // Get rich location context
+        const locationContext = await buildLocationContext(plot);
+
+        // Check for movement intent in actions
+        if (inputType === 'action') {
+            const movementIntent = movementService.parseMovementIntent(input);
+            if (movementIntent) {
+                // Check if this is a valid move
+                const canMove = await movementService.canMoveTo(plotId, movementIntent);
+                if (canMove.valid) {
+                    // Execute the move and yield narration
+                    const moveResult = await movementService.moveToLocation(plotId, movementIntent);
+                    if (moveResult.success) {
+                        yield moveResult.narration;
+                        
+                        // Update state after movement
+                        const updatedPlot = await Plot.findById(plotId);
+                        if (updatedPlot.current_state.current_activity === 'resting') {
+                            updatedPlot.current_state.current_activity = 'exploring';
+                            await updatedPlot.save();
+                        }
+                        
+                        return; // Movement handled, don't continue to AI
+                    }
+                }
+                // If move failed or target not found, continue to AI for narrative exploration
+            }
+        }
+
+        // Check for exploration intent (look around, examine surroundings, etc.)
+        const explorationPatterns = [
+            /^(?:i\s+)?(?:look|survey|examine|scout|search|explore)\s+(?:around|the area|this place|surroundings?|the room|here)/i,
+            /^(?:i\s+)?(?:take|have)\s+(?:a\s+)?look\s+around/i,
+            /^what(?:'s| is)\s+(?:around|here|in this (?:room|place|area))/i,
+        ];
+        const isExploring = inputType === 'action' && explorationPatterns.some(p => p.test(input));
         
-        if (settlement?.locations?.length > 0) {
-            const currentLoc = settlement.locations.find(l => 
-                l.name.toLowerCase() === currentLocationName?.toLowerCase()
+        // If exploring, add hint about undiscovered connections
+        let explorationHint = '';
+        if (isExploring) {
+            const settlement = plot.current_state.current_location.settlement;
+            const currentLoc = settlement?.locations?.find(l => 
+                l.name.toLowerCase() === plot.current_state.current_location.locationName?.toLowerCase()
             );
-            if (currentLoc) {
-                const connections = (currentLoc.connections || [])
-                    .map(c => `${c.direction}: ${c.locationName}`)
-                    .join(', ');
-                const pois = (currentLoc.pois || [])
-                    .filter(p => p.discovered)
-                    .map(p => p.name)
-                    .join(', ');
-                locationContext = `
-CURRENT LOCATION: ${currentLoc.name}
-${currentLoc.description || ''}
-- Nearby: ${connections || 'explore to discover'}
-- Here: ${pois || 'no notable features yet'}
-`.trim();
+            
+            if (currentLoc?.connections?.length > 0) {
+                const undiscoveredConns = currentLoc.connections.filter(c => {
+                    const targetLoc = settlement.locations?.find(l => 
+                        l.name.toLowerCase() === c.locationName?.toLowerCase()
+                    );
+                    return !targetLoc?.discovered;
+                });
+                
+                if (undiscoveredConns.length > 0) {
+                    explorationHint = `\n\nHINT FOR AI: The player is exploring. Mention these unexplored exits naturally: ${undiscoveredConns.map(c => `${c.direction}: ${c.locationName}`).join(', ')}. Mark any new discovery clearly.`;
+                }
             }
         }
 
@@ -692,6 +810,7 @@ VARIETY RULES (MANDATORY):
 - Start your response differently than the previous AI responses
 - Focus on what's NEW and what CHANGED
 - Skip atmosphere that's already established — get to the action
+${explorationHint}
 `.trim();
         } else if (inputType === 'speak') {
             streamMessage = `
@@ -735,8 +854,12 @@ Provide helpful GM info. Be CONCISE (2-3 sentences). Focus on what's useful to k
                 consequence_level: 'minor' // Default for streaming
             });
             
-            // TODO: Async discovery parsing will go here
-            // parseDiscoveries(plotId, fullResponse) - runs in background
+            // Async discovery parsing - extract NPCs, objects, locations from AI response
+            // This runs in background, doesn't block the response
+            if (discoveryService.likelyHasDiscoveries(fullResponse)) {
+                discoveryService.parseDiscoveries(plotId, fullResponse, input)
+                    .catch(err => console.error('[Discovery] Background parse failed:', err));
+            }
         }
 
     } catch (error) {

@@ -1353,4 +1353,52 @@ async function fetchGameInfo(plotId, characterId) {
         });
     }
 
+    // ========== GLOBAL HELPERS FOR MAP VIEWER ==========
+    
+    /**
+     * Add a message to the game log (used by MapViewer for movement narration)
+     */
+    window.appendToGameLog = function(author, content) {
+        const gameLog = document.getElementById('game-log');
+        if (!gameLog) return;
+        
+        const timestamp = new Date().toLocaleTimeString();
+        const authorClass = author.toLowerCase() === 'player' ? 'user' : 'ai';
+        const messageClass = author.toLowerCase() === 'player' ? 'userText' : 'systemText';
+        
+        const entry = document.createElement('div');
+        entry.className = `message ${authorClass}`;
+        entry.innerHTML = `
+            <div class="author ${authorClass}">${author}:</div>
+            <div class="${messageClass}">
+                ${content}
+                <span class="timestamp">${timestamp}</span>
+            </div>
+        `;
+        gameLog.appendChild(entry);
+        gameLog.scrollTop = gameLog.scrollHeight;
+    };
+    
+    /**
+     * Refresh game info (updates context bar, character panel, map)
+     */
+    window.refreshGameInfo = function() {
+        fetchGameInfo(plotId, characterId);
+    };
+    
+    /**
+     * Expose submitAction for MapViewer custom actions
+     * (Already exists but make sure it's accessible)
+     */
+    window.submitAction = function(actionText) {
+        const inputField = document.getElementById('chat-box');
+        if (inputField) {
+            inputField.value = actionText;
+        }
+        const submitBtn = document.getElementById('submit-btn');
+        if (submitBtn) {
+            submitBtn.click();
+        }
+    };
+
 });

@@ -18,6 +18,7 @@ const cors = require('cors');
 console.log('  [5/10] Loading world factories...');
 const { generateWorld } = require('./agents/world/factories/worldFactory');
 const regionFactory = require('./agents/world/factories/regionsFactory.js');
+const settlementsFactory = require('./agents/world/factories/settlementsFactory.js');
 console.log('  [6/10] Loading models...');
 const Plot = require('./db/models/Plot.js');
 const Quest = require('./db/models/Quest.js');
@@ -29,6 +30,7 @@ const GameLog = require('./db/models/GameLog.js');
 const actionInterpreter = require('./agents/actionInterpreter');
 const { summarizeLogs } = require('./services/gptService');
 const { getWorldAndRegionDetails, getInitialQuests } = require('./agents/world/storyTeller.js');
+const movementService = require('./services/movementService');
 
 
 // MongoDB connection
@@ -551,6 +553,7 @@ app.post('/api/plot', ensureAuthenticated, async (req, res) => {
                 current_location: {
                     region: initialRegion._id,
                     settlement: initialSettlement ? initialSettlement._id : null,
+                    locationId: null, // Will be set after locations are generated
                     coordinates: coordinates,
                     locationName: locationName,
                     locationDescription: locationDescription,
@@ -573,9 +576,18 @@ app.post('/api/plot', ensureAuthenticated, async (req, res) => {
 
         await plot.save();
         
+        // Sync locationId if settlement has locations
+        if (initialSettlement) {
+            await movementService.syncLocationId(plot._id);
+        }
+        
+        // Reload plot to get synced location
+        const updatedPlot = await Plot.findById(plot._id);
+        const finalLocationName = updatedPlot.current_state.current_location.locationName || locationName;
+        
         // Create initial game log entry with opening narrative
         const GameLog = require('./db/models/GameLog');
-        const openingMessage = `You arrive in ${locationName}, ${locationDescription}\n\nThe world stretches before you—alive, indifferent, and full of possibility. What will you do?`;
+        const openingMessage = `You arrive at ${finalLocationName} in ${settlement?.name || initialRegion.name}.\n\n${locationDescription}\n\nThe world stretches before you—alive, indifferent, and full of possibility. What will you do?`;
         
         const gameLog = new GameLog({
             plotId: plot._id,
@@ -957,6 +969,227 @@ app.post('/api/plots/:plotId/quick-action', ensureAuthenticated, async (req, res
         res.json({ prompt });
     } catch (error) {
         console.error('Error handling quick action:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// ========== MOVEMENT API ==========
+
+// Get current location with full details
+app.get('/api/plots/:plotId/location', ensureAuthenticated, async (req, res) => {
+    try {
+        const locationData = await movementService.getCurrentLocation(req.params.plotId);
+        res.json(locationData);
+    } catch (error) {
+        console.error('Error getting location:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Get valid moves from current location
+app.get('/api/plots/:plotId/moves', ensureAuthenticated, async (req, res) => {
+    try {
+        const moves = await movementService.getValidMoves(req.params.plotId);
+        res.json({ moves });
+    } catch (error) {
+        console.error('Error getting valid moves:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Move to a connected location
+app.post('/api/plots/:plotId/move', ensureAuthenticated, async (req, res) => {
+    try {
+        const { targetId, targetName, direction } = req.body;
+        
+        if (!targetId && !targetName && !direction) {
+            return res.status(400).json({ 
+                error: 'Must provide targetId, targetName, or direction',
+                errorCode: 'MISSING_TARGET'
+            });
+        }
+        
+        const result = await movementService.moveToLocation(req.params.plotId, {
+            targetId,
+            targetName,
+            direction
+        });
+        
+        if (!result.success) {
+            return res.status(400).json(result);
+        }
+        
+        // Also log the movement to game log
+        const GameLog = require('./db/models/GameLog');
+        const plot = await Plot.findById(req.params.plotId).populate('gameLogs');
+        
+        if (plot && result.narration) {
+            let gameLog = plot.gameLogs[plot.gameLogs.length - 1];
+            if (!gameLog || gameLog.messages?.length >= 50) {
+                gameLog = new GameLog({ plotId: req.params.plotId, messages: [] });
+                plot.gameLogs.push(gameLog._id);
+                await plot.save();
+            } else {
+                gameLog = await GameLog.findById(gameLog._id);
+            }
+            
+            gameLog.messages.push({
+                author: 'System',
+                content: result.narration,
+                timestamp: new Date()
+            });
+            await gameLog.save();
+        }
+        
+        res.json(result);
+    } catch (error) {
+        console.error('Error moving:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Check if a move is valid (without executing)
+app.post('/api/plots/:plotId/can-move', ensureAuthenticated, async (req, res) => {
+    try {
+        const { targetId, targetName, direction } = req.body;
+        const result = await movementService.canMoveTo(req.params.plotId, {
+            targetId,
+            targetName,
+            direction
+        });
+        res.json(result);
+    } catch (error) {
+        console.error('Error checking move:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Sync locationId from locationName (migration helper)
+app.post('/api/plots/:plotId/sync-location', ensureAuthenticated, async (req, res) => {
+    try {
+        const locationId = await movementService.syncLocationId(req.params.plotId);
+        res.json({ synced: !!locationId, locationId });
+    } catch (error) {
+        console.error('Error syncing location:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// ========== POI (Points of Interest) API ==========
+
+// Get POIs at current location
+app.get('/api/plots/:plotId/pois', ensureAuthenticated, async (req, res) => {
+    try {
+        const locationData = await movementService.getCurrentLocation(req.params.plotId);
+        res.json({
+            location: locationData.location?.name || 'Unknown',
+            pois: locationData.pois || []
+        });
+    } catch (error) {
+        console.error('Error getting POIs:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Add or update a POI at current location
+app.post('/api/plots/:plotId/pois', ensureAuthenticated, async (req, res) => {
+    try {
+        const { name, type, description, icon, persistent } = req.body;
+        
+        if (!name) {
+            return res.status(400).json({ error: 'POI name is required' });
+        }
+        
+        const plot = await Plot.findById(req.params.plotId)
+            .populate('current_state.current_location.settlement');
+        
+        if (!plot) {
+            return res.status(404).json({ error: 'Plot not found' });
+        }
+        
+        const settlementId = plot.current_state.current_location.settlement?._id;
+        const locationName = plot.current_state.current_location.locationName;
+        
+        if (!settlementId || !locationName) {
+            return res.status(400).json({ error: 'Not at a valid location' });
+        }
+        
+        const poi = await settlementsFactory.addPoi(settlementId, locationName, {
+            name,
+            type: type || 'other',
+            description: description || '',
+            icon: icon || '',
+            persistent: persistent !== false
+        });
+        
+        if (!poi) {
+            return res.status(400).json({ error: 'Failed to add POI' });
+        }
+        
+        res.json({ success: true, poi });
+    } catch (error) {
+        console.error('Error adding POI:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Record interaction with a POI
+app.post('/api/plots/:plotId/pois/:poiId/interact', ensureAuthenticated, async (req, res) => {
+    try {
+        const { interaction } = req.body;
+        
+        const plot = await Plot.findById(req.params.plotId)
+            .populate('current_state.current_location.settlement');
+        
+        if (!plot) {
+            return res.status(404).json({ error: 'Plot not found' });
+        }
+        
+        const settlement = plot.current_state.current_location.settlement;
+        const locationName = plot.current_state.current_location.locationName;
+        
+        if (!settlement || !locationName) {
+            return res.status(400).json({ error: 'Not at a valid location' });
+        }
+        
+        // Find the location
+        const location = settlement.locations?.find(l => 
+            l.name.toLowerCase() === locationName.toLowerCase()
+        );
+        
+        if (!location) {
+            return res.status(404).json({ error: 'Location not found' });
+        }
+        
+        // Find the POI
+        const poi = location.pois?.find(p => 
+            p._id.toString() === req.params.poiId
+        );
+        
+        if (!poi) {
+            return res.status(404).json({ error: 'POI not found' });
+        }
+        
+        // Update interaction tracking
+        poi.interactionCount = (poi.interactionCount || 0) + 1;
+        if (interaction) {
+            poi.lastInteraction = interaction.substring(0, 200);
+        }
+        poi.discovered = true;
+        
+        await settlement.save();
+        
+        res.json({ 
+            success: true, 
+            poi: {
+                id: poi._id,
+                name: poi.name,
+                interactionCount: poi.interactionCount,
+                lastInteraction: poi.lastInteraction
+            }
+        });
+    } catch (error) {
+        console.error('Error recording POI interaction:', error);
         res.status(500).json({ error: error.message });
     }
 });

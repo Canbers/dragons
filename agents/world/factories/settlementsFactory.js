@@ -208,47 +208,77 @@ const generateLocations = async (settlementId) => {
     };
     const { min, max } = locationCounts[settlement.size] || locationCounts.small;
     
-    const prompt = `Generate internal locations for "${settlement.name}", a ${settlement.size} settlement.
+    const prompt = `Generate ${min}-${max} locations for the settlement "${settlement.name}".
 
-SETTLEMENT: ${settlement.description || 'A settlement in ' + settlement.region?.name}
+Settlement info: ${settlement.short || settlement.description?.substring(0, 200) || 'A settlement'}
 
-Generate ${min}-${max} KEY LOCATIONS that define this settlement. These are the major areas a visitor would know about.
+Requirements:
+- Include one entry point (gate/docks/road)
+- Include one tavern or market
+- Each location needs a name, type, and brief description
+- Add connections between locations
 
-REQUIRED LOCATIONS:
-- At least one ENTRY POINT (gate, docks, road entrance)
-- At least one PUBLIC GATHERING place (market, plaza, tavern)
-- At least one NOTABLE landmark or building
+Respond with a JSON object containing a "locations" array:
 
-Each location should:
-- Have a distinctive, memorable name (not generic like "The Market")
-- Feel connected to the settlement's character and tensions
-- Suggest what activities happen there
+{
+  "locations": [
+    {
+      "name": "The Cinder Gate",
+      "type": "gate",
+      "shortDescription": "Main entrance",
+      "description": "The main gate into town.",
+      "connections": [{"locationName": "Market Square", "direction": "west"}],
+      "isStartingLocation": true
+    },
+    {
+      "name": "Market Square", 
+      "type": "market",
+      "shortDescription": "Trading hub",
+      "description": "The central marketplace.",
+      "connections": [{"locationName": "The Cinder Gate", "direction": "east"}]
+    }
+  ]
+}
 
-Return JSON array:
-[
-  {
-    "name": "The Soot Gate",
-    "type": "gate",
-    "shortDescription": "Main entrance, always guarded, travelers searched",
-    "description": "The eastern gate of the settlement, where guards inspect all incoming travelers. Soot from nearby forges permanently stains the stone archway.",
-    "connections": [
-      { "locationName": "Marketway", "direction": "west", "description": "through the gate into town" }
-    ],
-    "isStartingLocation": true
-  },
-  ...more locations
-]
-
-LOCATION TYPES: gate, market, tavern, temple, plaza, shop, residence, landmark, dungeon, district, docks, barracks, palace, other
-
-Make connections logical - gates connect to main streets, taverns near markets, temples in prominent positions.`;
+Types: gate, market, tavern, temple, plaza, shop, landmark, docks, barracks, other`;
 
     let retries = 5;
     while (retries > 0) {
         try {
-            const systemPrompt = 'You are a world-building assistant for a fantasy RPG. Generate creative, consistent content in valid JSON format only.';
+            const systemPrompt = 'You are a world-building assistant. Generate location data as JSON.';
             const result = await gpt.simplePrompt('gpt-5-mini', systemPrompt, prompt);
-            const locations = JSON.parse(result.content);
+            
+            console.log(`[Locations] Raw AI response (first 300 chars): ${result.content?.substring(0, 300)}`);
+            
+            // Try to extract JSON from markdown code blocks if present
+            let jsonContent = result.content;
+            const jsonMatch = jsonContent.match(/```(?:json)?\s*([\s\S]*?)```/);
+            if (jsonMatch) {
+                jsonContent = jsonMatch[1].trim();
+            }
+            
+            // Parse JSON
+            const parsed = JSON.parse(jsonContent);
+            
+            // Extract locations array from object or use directly if array
+            let locations;
+            if (Array.isArray(parsed)) {
+                locations = parsed;
+            } else if (parsed.locations && Array.isArray(parsed.locations)) {
+                locations = parsed.locations;
+            } else {
+                // Look for any array property
+                const arrayKey = Object.keys(parsed).find(k => Array.isArray(parsed[k]));
+                if (arrayKey) {
+                    locations = parsed[arrayKey];
+                } else {
+                    throw new Error('No locations array found in response');
+                }
+            }
+            
+            if (!locations || locations.length === 0) {
+                throw new Error('Empty locations array');
+            }
             
             // Validate and enhance locations
             const processedLocations = locations.map((loc, index) => ({

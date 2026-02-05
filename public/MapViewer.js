@@ -1,12 +1,12 @@
 /**
- * MapViewer.js - Interactive Semantic Map Component (v2)
+ * MapViewer.js - Interactive Semantic Map Component (v3)
  * 
  * Three zoom levels:
  * - Region: High-level overview of world regions (terrain map)
  * - Local: Connected locations within current settlement
  * - Scene: Points of interest at current location
  * 
- * Data is seeded from settlement data and expanded through AI discoveries.
+ * Movement is now handled via dedicated movement API for deterministic results.
  */
 
 class MapViewer {
@@ -16,6 +16,7 @@ class MapViewer {
     this.currentPlotId = null;
     this.currentCharacterId = null;
     this.mapData = null;
+    this.isMoving = false; // Prevent double-clicks during movement
     
     this.render();
   }
@@ -31,13 +32,74 @@ class MapViewer {
     if (!this.currentPlotId) return;
     
     try {
-      const response = await fetch(`/api/plots/${this.currentPlotId}/map`);
-      if (!response.ok) throw new Error('Failed to fetch map data');
-      this.mapData = await response.json();
+      // Use the new location endpoint for richer data
+      const response = await fetch(`/api/plots/${this.currentPlotId}/location`);
+      if (!response.ok) throw new Error('Failed to fetch location data');
+      const locationData = await response.json();
+      
+      // Transform to expected mapData structure
+      this.mapData = this.transformLocationData(locationData);
     } catch (error) {
       console.error('Error fetching map data:', error);
       this.mapData = this.getDefaultMapData();
     }
+  }
+
+  /**
+   * Transform location API response to mapData structure
+   */
+  transformLocationData(data) {
+    if (data.type === 'wilderness') {
+      return {
+        region: {
+          name: data.region?.name || 'Unknown Region',
+          description: data.region?.description || '',
+          map: data.region?.map || null
+        },
+        local: {
+          settlementName: 'Wilderness',
+          current: 'Open terrain',
+          currentDescription: 'You are traveling through the wilderness.',
+          currentId: null,
+          connections: [],
+          discoveredLocations: []
+        },
+        scene: {
+          location: 'Wilderness',
+          description: '',
+          pois: []
+        }
+      };
+    }
+    
+    return {
+      region: {
+        name: data.region?.name || 'Unknown Region',
+        description: data.region?.description || '',
+        map: data.region?.map || null
+      },
+      local: {
+        settlementName: data.settlement?.name || 'Unknown Settlement',
+        current: data.location?.name || 'Unknown Location',
+        currentDescription: data.location?.description || '',
+        currentId: data.location?.id || null,
+        currentType: data.location?.type || 'other',
+        connections: (data.connections || []).map(c => ({
+          name: c.name,
+          direction: c.direction,
+          description: c.description,
+          distance: c.distance,
+          targetId: c.targetId,
+          discovered: c.discovered
+        })),
+        discoveredLocations: data.discoveredLocations || []
+      },
+      scene: {
+        location: data.location?.name || 'Unknown',
+        description: data.location?.description || '',
+        pois: data.pois || []
+      }
+    };
   }
 
   getDefaultMapData() {
@@ -47,6 +109,7 @@ class MapViewer {
         settlementName: 'Unknown Settlement',
         current: 'Unknown Location', 
         currentDescription: '',
+        currentId: null,
         connections: [], 
         discoveredLocations: [] 
       },
@@ -56,6 +119,8 @@ class MapViewer {
 
   render() {
     if (!this.container) return;
+
+    const loadingClass = this.isMoving ? 'loading' : '';
 
     this.container.innerHTML = `
       <div class="map-header">
@@ -71,8 +136,8 @@ class MapViewer {
           </button>
         </div>
       </div>
-      <div class="map-content">
-        ${this.renderMapForZoom()}
+      <div class="map-content ${loadingClass}">
+        ${this.isMoving ? '<div class="map-loading">🚶 Moving...</div>' : this.renderMapForZoom()}
       </div>
       <div class="action-panel" id="action-panel" style="display: none;">
         <div class="action-panel-header">
@@ -134,13 +199,17 @@ class MapViewer {
     const connections = local.connections || [];
     const discovered = local.discoveredLocations || [];
     
+    // Type icon for current location
+    const typeIcon = this.getLocationTypeIcon(local.currentType);
+    
     if (connections.length === 0 && discovered.length <= 1) {
       return `
         <div class="local-view">
           <div class="current-location-header">
-            <h3>📍 ${local.current || 'Unknown Location'}</h3>
+            <h3>${typeIcon} ${local.current || 'Unknown Location'}</h3>
             <p class="settlement-name">in ${local.settlementName || 'Unknown Settlement'}</p>
           </div>
+          ${local.currentDescription ? `<p class="location-description">${local.currentDescription}</p>` : ''}
           <div class="map-placeholder">
             <p>No nearby locations discovered yet.</p>
             <p class="hint">Explore the settlement to reveal connections!</p>
@@ -155,7 +224,7 @@ class MapViewer {
     return `
       <div class="local-view">
         <div class="current-location-header">
-          <h3>📍 ${local.current || 'Unknown Location'}</h3>
+          <h3>${typeIcon} ${local.current || 'Unknown Location'}</h3>
           <p class="settlement-name">in ${local.settlementName || 'Unknown Settlement'}</p>
         </div>
         ${local.currentDescription ? `<p class="location-description">${local.currentDescription}</p>` : ''}
@@ -165,6 +234,26 @@ class MapViewer {
         </div>
       </div>
     `;
+  }
+
+  getLocationTypeIcon(type) {
+    const icons = {
+      'gate': '🚪',
+      'market': '🏪',
+      'tavern': '🍺',
+      'temple': '⛪',
+      'plaza': '🏛️',
+      'shop': '🛒',
+      'residence': '🏠',
+      'landmark': '🗿',
+      'dungeon': '🕳️',
+      'district': '🏘️',
+      'docks': '⚓',
+      'barracks': '⚔️',
+      'palace': '🏰',
+      'other': '📍'
+    };
+    return icons[type] || icons.other;
   }
 
   createConnectionGraph(local) {
@@ -235,19 +324,23 @@ class MapViewer {
     nodes.forEach((node, index) => {
       const conn = node.connection;
       const directionEmoji = this.getDirectionEmoji(conn.direction);
+      const hasTarget = conn.targetId !== null;
+      const nodeClass = hasTarget ? 'location-node clickable' : 'location-node undiscovered';
+      const fillColor = hasTarget ? 'var(--bg-secondary, #2a2a4a)' : 'var(--bg-tertiary, #1a1a3a)';
       
       svgContent += `
         <circle 
           cx="${node.x}" 
           cy="${node.y}" 
           r="28" 
-          fill="var(--bg-secondary, #2a2a4a)" 
-          stroke="var(--accent-secondary, #6366f1)" 
+          fill="${fillColor}"
+          stroke="${hasTarget ? 'var(--accent-secondary, #6366f1)' : 'var(--border-color, #444)'}"
           stroke-width="2"
-          class="location-node clickable"
+          class="${nodeClass}"
           data-location="${conn.name}"
+          data-target-id="${conn.targetId || ''}"
           data-index="${index}"
-          style="cursor: pointer;"
+          style="cursor: ${hasTarget ? 'pointer' : 'not-allowed'};"
         />
         <text 
           x="${node.x}" 
@@ -381,10 +474,11 @@ class MapViewer {
     if (mapContent) {
       mapContent.addEventListener('click', (e) => {
         const node = e.target.closest('.location-node.clickable');
-        if (node) {
+        if (node && !this.isMoving) {
           const locationName = node.dataset.location;
+          const targetId = node.dataset.targetId;
           const index = parseInt(node.dataset.index);
-          this.showLocationActions(locationName, index);
+          this.showLocationActions(locationName, targetId, index);
         }
       });
     }
@@ -413,7 +507,7 @@ class MapViewer {
       submitBtn.addEventListener('click', () => {
         const action = input.value.trim();
         if (action) {
-          this.executeAction(action);
+          this.executeCustomAction(action);
           input.value = '';
         }
       });
@@ -425,7 +519,7 @@ class MapViewer {
     }
   }
 
-  showLocationActions(locationName, connectionIndex) {
+  showLocationActions(locationName, targetId, connectionIndex) {
     const connection = this.mapData.local?.connections?.[connectionIndex];
     const panel = this.container.querySelector('#action-panel');
     const title = this.container.querySelector('#action-panel-title');
@@ -436,26 +530,136 @@ class MapViewer {
     title.textContent = locationName;
 
     const direction = connection?.direction;
-    const actions = [
-      { label: `🚶 Go ${direction || 'there'}`, action: `I go to ${locationName}` },
-      { label: '👀 Look toward', action: `I look toward ${locationName}` },
-      { label: '❓ Ask about', action: `What do I know about ${locationName}?` }
-    ];
-
-    body.innerHTML = actions.map(a => `
-      <button class="quick-action-btn" data-action="${a.action}">
-        ${a.label}
+    
+    // Primary action is now direct movement via API
+    body.innerHTML = `
+      <button class="quick-action-btn primary" data-action="move" data-target-id="${targetId}" data-target-name="${locationName}">
+        🚶 Go to ${locationName}
       </button>
-    `).join('');
+      <button class="quick-action-btn" data-action="look" data-target="${locationName}">
+        👀 Look toward ${locationName}
+      </button>
+      <button class="quick-action-btn" data-action="ask" data-target="${locationName}">
+        ❓ What do I know about ${locationName}?
+      </button>
+    `;
 
-    // Attach click handlers to new buttons
+    // Attach click handlers
     body.querySelectorAll('.quick-action-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        this.executeAction(btn.dataset.action);
+      btn.addEventListener('click', async () => {
+        const action = btn.dataset.action;
+        
+        if (action === 'move') {
+          // Use movement API directly
+          await this.moveToLocation(btn.dataset.targetId, btn.dataset.targetName);
+        } else if (action === 'look') {
+          this.executeCustomAction(`I look toward ${btn.dataset.target}`);
+        } else if (action === 'ask') {
+          this.executeCustomAction(`What do I know about ${btn.dataset.target}?`);
+        }
       });
     });
 
     panel.style.display = 'block';
+  }
+
+  /**
+   * Move to a location using the movement API
+   * This is deterministic - no AI interpretation needed
+   */
+  async moveToLocation(targetId, targetName) {
+    if (this.isMoving) return;
+    
+    this.hideActionPanel();
+    this.isMoving = true;
+    this.render(); // Show loading state
+    
+    try {
+      const response = await fetch(`/api/plots/${this.currentPlotId}/move`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          targetId: targetId || undefined,
+          targetName: targetName
+        })
+      });
+      
+      const result = await response.json();
+      
+      if (!result.success) {
+        this.showToast(`❌ ${result.error}`, 'error');
+        return;
+      }
+      
+      // Show narration in game log
+      if (result.narration && window.appendToGameLog) {
+        window.appendToGameLog('System', result.narration);
+      } else if (result.narration) {
+        // Fallback: add to game log element directly
+        this.addNarrationToLog(result.narration);
+      }
+      
+      // Show discovery toast
+      if (result.discovered) {
+        this.showToast(`🔍 Discovered: ${result.newLocation?.name}`, 'success');
+      } else {
+        this.showToast(`📍 Arrived at ${result.newLocation?.name}`, 'info');
+      }
+      
+      // Refresh map data
+      await this.fetchMapData();
+      
+      // Also refresh game info to update context bar
+      if (window.refreshGameInfo) {
+        window.refreshGameInfo();
+      }
+      
+    } catch (error) {
+      console.error('Movement error:', error);
+      this.showToast(`❌ Failed to move: ${error.message}`, 'error');
+    } finally {
+      this.isMoving = false;
+      this.render();
+    }
+  }
+
+  /**
+   * Add narration directly to game log (fallback)
+   */
+  addNarrationToLog(narration) {
+    const gameLog = document.getElementById('game-log');
+    if (!gameLog) return;
+    
+    const timestamp = new Date().toLocaleTimeString();
+    const entry = document.createElement('div');
+    entry.className = 'message system';
+    entry.innerHTML = `
+      <div class="author">System:</div>
+      <div class="systemText">
+        ${narration}
+        <span class="timestamp">${timestamp}</span>
+      </div>
+    `;
+    gameLog.appendChild(entry);
+    gameLog.scrollTop = gameLog.scrollHeight;
+  }
+
+  /**
+   * Show a toast notification
+   */
+  showToast(message, type = 'info') {
+    const container = document.getElementById('toast-container');
+    if (!container) {
+      console.log(`[Toast] ${type}: ${message}`);
+      return;
+    }
+    
+    const toast = document.createElement('div');
+    toast.className = `toast ${type}`;
+    toast.textContent = message;
+    container.appendChild(toast);
+    
+    setTimeout(() => toast.remove(), 3000);
   }
 
   showPoiActions(poiIndex) {
@@ -518,7 +722,7 @@ class MapViewer {
     // Attach click handlers
     body.querySelectorAll('.quick-action-btn').forEach(btn => {
       btn.addEventListener('click', () => {
-        this.executeAction(btn.dataset.action);
+        this.executeCustomAction(btn.dataset.action);
       });
     });
 
@@ -532,14 +736,27 @@ class MapViewer {
     }
   }
 
-  async executeAction(actionText) {
+  /**
+   * Execute a custom action through the main game flow
+   * (For non-movement actions like looking, talking, etc.)
+   */
+  async executeCustomAction(actionText) {
     this.hideActionPanel();
     
-    // Trigger the main game action submission
-    if (window.submitAction) {
-      window.submitAction(actionText);
-    } else {
-      console.error('submitAction not found in global scope');
+    // Set input type to action
+    const actionRadio = document.querySelector('input[name="inputType"][value="action"]');
+    if (actionRadio) actionRadio.checked = true;
+    
+    // Set input text
+    const inputField = document.getElementById('chat-box');
+    if (inputField) {
+      inputField.value = actionText;
+    }
+    
+    // Trigger submission
+    const submitBtn = document.getElementById('submit-btn');
+    if (submitBtn) {
+      submitBtn.click();
     }
   }
 
