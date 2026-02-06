@@ -1,13 +1,9 @@
-const mongoose = require('mongoose');
-const World = require('../../db/models/World');
-const Ecosystem = require('../../db/models/Ecosystem');
 const Region = require('../../db/models/Region');
 const Settlement = require('../../db/models/Settlement');
 const Plot = require('../../db/models/Plot');
 const Quest = require('../../db/models/Quest');
 const noteTaker = require('../world/noteTaker');
 const gpt = require('../../services/gptService');
-const { uuid } = require('uuidv4');
 
 const questBuilder = async (questId) => {
     try {
@@ -229,17 +225,11 @@ async function getWorldAndRegionDetails(plotId) {
 
 async function getInitialQuests(plotId) {
     try {
-        const plot = await Plot.findById(plotId).populate('current_state.current_location.region');
-        if (!plot) {
-            throw new Error('Plot not found');
-        }
-        const { current_state: { current_location: { region } } } = plot;
-        const quests = await storyOptions(plotId);
-        return quests;
+        return await storyOptions(plotId);
     } catch (error) {
         console.error('Error getting initial quests:', error);
         throw error;
     }
 }
 
-module.exports = { storyOptions, createQuestInCurrentSettlement, getWorldAndRegionDetails, getInitialQuests, questBuilder };
+module.exports = { storyOptions, getWorldAndRegionDetails, getInitialQuests };

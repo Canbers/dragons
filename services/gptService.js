@@ -75,49 +75,37 @@ DIFFICULTY: ${difficultyModifier}`;
  * Main prompt function for game interactions
  * Uses the Indifferent World system prompt
  */
-const prompt = (engine, message, options = {}) => {
+const prompt = async (engine, message, options = {}) => {
     const { tone = 'classic', difficulty = 'casual' } = options;
     const systemPrompt = buildSystemPrompt(tone, difficulty);
     const model = engine || GAME_MODEL;
-    
-    return new Promise(async (resolve, reject) => {
-        try {
-            const completion = await openai.chat.completions.create({
-                model: model,
-                messages: [
-                    { role: "system", content: systemPrompt },
-                    { role: "user", content: message }
-                ],
-                response_format: { type: "json_object" }
-            });
-            resolve(completion.choices[0].message);
-        } catch (error) {
-            reject(error.message);
-        }
+
+    const completion = await openai.chat.completions.create({
+        model: model,
+        messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: message }
+        ],
+        response_format: { type: "json_object" }
     });
+    return completion.choices[0].message;
 };
 
 /**
  * Simple prompt without the full world system (for utility tasks)
  */
-const simplePrompt = (engine, systemContent, userMessage) => {
+const simplePrompt = async (engine, systemContent, userMessage) => {
     const model = engine || GAME_MODEL;
-    
-    return new Promise(async (resolve, reject) => {
-        try {
-            const completion = await openai.chat.completions.create({
-                model: model,
-                messages: [
-                    { role: "system", content: systemContent },
-                    { role: "user", content: userMessage }
-                ],
-                response_format: { type: "json_object" }
-            });
-            resolve(completion.choices[0].message);
-        } catch (error) {
-            reject(error.message);
-        }
+
+    const completion = await openai.chat.completions.create({
+        model: model,
+        messages: [
+            { role: "system", content: systemContent },
+            { role: "user", content: userMessage }
+        ],
+        response_format: { type: "json_object" }
     });
+    return completion.choices[0].message;
 };
 
 /**
@@ -150,46 +138,33 @@ const streamPrompt = async function* (engine, message, options = {}) {
     }
 };
 
-const toolPrompt = (engine, message, tools, options = {}) => {
+const toolPrompt = async (engine, message, tools, options = {}) => {
     const { tone = 'classic', difficulty = 'casual' } = options;
     const systemPrompt = buildSystemPrompt(tone, difficulty);
     const model = engine || GAME_MODEL;
-    
-    return new Promise(async (resolve, reject) => {
-        try {
-            const completion = await openai.chat.completions.create({
-                model: model,
-                messages: [
-                    { role: "system", content: systemPrompt },
-                    { role: "user", content: message }
-                ],
-                tools: tools,
-                tool_choice: "required"
-            });
-            console.log(completion);
-            resolve(completion.choices[0].message);
-        } catch (error) {
-            reject(error.message);
-        }
+
+    const completion = await openai.chat.completions.create({
+        model: model,
+        messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: message }
+        ],
+        tools: tools,
+        tool_choice: "required"
     });
+    return completion.choices[0].message;
 };
 
-const summarizeLogs = (logs) => {
-    return new Promise(async (resolve, reject) => {
-        try {
-            const summaryPrompt = "Summarize the following game logs in a concise manner, preserving key events, decisions, and consequences: " + logs.map(log => log.content).join(' ');
-            const completion = await openai.chat.completions.create({
-                model: GAME_MODEL,
-                messages: [
-                    { role: "system", content: "You are summarizing game events for memory persistence. Focus on: key decisions made, consequences faced, NPC interactions, and world state changes." },
-                    { role: "user", content: summaryPrompt }
-                ]
-            });
-            resolve(completion.choices[0].message.content);
-        } catch (error) {
-            reject(error.message);
-        }
+const summarizeLogs = async (logs) => {
+    const summaryPrompt = "Summarize the following game logs in a concise manner, preserving key events, decisions, and consequences: " + logs.map(log => log.content).join(' ');
+    const completion = await openai.chat.completions.create({
+        model: GAME_MODEL,
+        messages: [
+            { role: "system", content: "You are summarizing game events for memory persistence. Focus on: key decisions made, consequences faced, NPC interactions, and world state changes." },
+            { role: "user", content: summaryPrompt }
+        ]
     });
+    return completion.choices[0].message.content;
 };
 
 module.exports = {

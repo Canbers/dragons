@@ -5,14 +5,11 @@ const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const https = require('https');
-console.log('  [2/10] Loading socket.io...');
-const socketIo = require('socket.io');
-console.log('  [3/10] Loading mongoose...');
+console.log('  [2/10] Loading mongoose...');
 const mongoose = require('mongoose');
 require('dotenv').config();
 console.log('  [4/10] Auth0 skip:', !!process.env.SKIP_AUTH);
 const auth = process.env.SKIP_AUTH ? null : require('express-openid-connect').auth;
-const bodyParser = require('body-parser');
 const app = express();
 const cors = require('cors');
 console.log('  [5/10] Loading world factories...');
@@ -29,7 +26,7 @@ const Settlement = require('./db/models/Settlement.js');
 const World = require('./db/models/World.js');
 const GameLog = require('./db/models/GameLog.js');
 const actionInterpreter = require('./agents/actionInterpreter');
-const { summarizeLogs } = require('./services/gptService');
+const { summarizeLogs, simplePrompt } = require('./services/gptService');
 const { getWorldAndRegionDetails, getInitialQuests } = require('./agents/world/storyTeller.js');
 const movementService = require('./services/movementService');
 const gameAgent = require('./services/gameAgent');
@@ -69,8 +66,7 @@ app.use(cors(corsOptions));
 
 // Other middleware
 app.use(express.json());
-app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({ extended: true }));
+app.use(express.urlencoded({ extended: true }));
 
 // Static file serving
 app.use(express.static(path.join(__dirname, 'public')));
@@ -318,8 +314,7 @@ Respond in JSON format:
   }
 }`;
 
-        const gpt = require('./services/gptService');
-        const response = await gpt.simplePrompt('gpt-5-mini',
+        const response = await simplePrompt('gpt-5-mini',
             'You write compelling adventure hooks for RPG worlds. Be concise and evocative.',
             hookPrompt
         );
@@ -954,7 +949,6 @@ app.get('/api/plots/:plotId/story-summary', ensureAuthenticated, async (req, res
         }
 
         // Get recent game logs
-        const GameLog = require('./db/models/GameLog');
         const logs = await GameLog.find({ plotId: plotId })
             .sort({ _id: -1 })
             .limit(5); // Get last few log documents
@@ -974,7 +968,6 @@ app.get('/api/plots/:plotId/story-summary', ensureAuthenticated, async (req, res
                             plot.current_state?.current_location?.region?.name || 'Unknown';
 
         // Use GPT to generate summary
-        const gpt = require('./services/gptService');
         const summaryPrompt = `Summarize this adventure in 3-4 sentences. Focus on key events, decisions, and their consequences. Write it as a story recap, in past tense.
 
 World: ${worldName}
@@ -989,7 +982,7 @@ Respond in JSON:
     "keyEvents": ["Event 1", "Event 2", "Event 3"]
 }`;
 
-        const response = await gpt.simplePrompt('gpt-5-mini', 
+        const response = await simplePrompt('gpt-5-mini',
             'You write concise story summaries for RPG adventures.',
             summaryPrompt
         );
@@ -1248,7 +1241,6 @@ app.post('/api/plots/:plotId/move', ensureAuthenticated, async (req, res) => {
         }
         
         // Also log the movement to game log
-        const GameLog = require('./db/models/GameLog');
         const plot = await Plot.findById(req.params.plotId).populate('gameLogs');
         
         if (plot && result.narration) {

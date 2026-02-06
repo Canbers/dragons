@@ -5,26 +5,23 @@ const layoutService = require('../../../services/layoutService');
 
 const buffer = 5;
 
-const create = (region, count = 1) => {
-    return new Promise(async (resolve, reject) => {
-        const settlements = [];
+const create = async (region, count = 1) => {
+    const settlements = [];
 
-        for (let i = 0; i < count; i++) {
-            const size = getRandomSize();
-            const baseCoordinates = generateUniqueCoordinates(settlements);
-            const allCoordinates = generateAllCoordinates(baseCoordinates, size);
+    for (let i = 0; i < count; i++) {
+        const size = getRandomSize();
+        const baseCoordinates = generateUniqueCoordinates(settlements);
+        const allCoordinates = generateAllCoordinates(baseCoordinates, size);
 
-            settlements.push({
-                name: uuid(),
-                region: region._id,
-                size: size,
-                coordinates: allCoordinates,
-            });
-        }
+        settlements.push({
+            name: uuid(),
+            region: region._id,
+            size: size,
+            coordinates: allCoordinates,
+        });
+    }
 
-        let commitedSettlments = await Settlement.insertMany(settlements);
-        resolve(commitedSettlments);
-    });
+    return await Settlement.insertMany(settlements);
 };
 
 const getRandomSize = () => {
@@ -94,7 +91,7 @@ const getTerrainTypes = (region, coordinates) => {
     const { map } = region;
     let terrainTypes = [];
 
-    const getTile = (x, y) => (map && map[y] && map[x]) ? map[y][x] : null;
+    const getTile = (x, y) => (map && map[y] && map[y][x] !== undefined) ? map[y][x] : null;
 
     coordinates.forEach(([x, y]) => {
         terrainTypes.push(getTile(x, y));
@@ -106,13 +103,12 @@ const getTerrainTypes = (region, coordinates) => {
     return uniqueTerrainTypes.join(', ') || null;
 };
 
-const nameAndDescription = (settlement_id) => {
-    return new Promise(async (resolve, reject) => {
-        let settlement = await Settlement.findOne({ _id: settlement_id }).populate({ path: 'region', populate: { path: 'world' } }).exec();
-        const terrainTypes = getTerrainTypes(settlement.region, settlement.coordinates);
-        console.log("Prompting GPT for Settlement description...");
+const nameAndDescription = async (settlement_id) => {
+    let settlement = await Settlement.findOne({ _id: settlement_id }).populate({ path: 'region', populate: { path: 'world' } }).exec();
+    const terrainTypes = getTerrainTypes(settlement.region, settlement.coordinates);
+    console.log("Prompting GPT for Settlement description...");
 
-        let promptResult = await gpt.prompt('gpt-5-mini', `Create a ${settlement.size} settlement for an "Indifferent World" RPG.
+    return await gpt.prompt('gpt-5-mini', `Create a ${settlement.size} settlement for an "Indifferent World" RPG.
 
 World: ${settlement.region.world.name} - ${settlement.region.world.description}
 Region: ${settlement.region.name}
@@ -137,12 +133,9 @@ Format as JSON:
   "description": "<Two paragraphs: first about the place itself, second about the people and current tensions>",
   "short": "<Two sentences capturing what makes this place memorable>"
 }`);
-        
-        resolve(promptResult);
-    });
 };
 
-// Settlments MUST be an array. If you only want to describe
+// Settlements MUST be an array. If you only want to describe
 // a single settlement then just use an array of one.
 const describe = async (settlements) => {
     if (!Array.isArray(settlements)) {
@@ -499,12 +492,10 @@ const addPoi = async (settlementId, locationName, poiData) => {
     return location.pois.find(p => p.name.toLowerCase() === poiData.name.toLowerCase());
 };
 
-module.exports = { 
-    create, 
-    describe, 
-    generateLocations, 
+module.exports = {
+    create,
+    describe,
+    generateLocations,
     ensureLocations,
-    discoverLocation,
-    addLocation,
     addPoi
 };

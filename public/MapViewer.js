@@ -570,50 +570,6 @@ class MapViewer {
     }
   }
 
-  showLocationActions(locationName, targetId, connectionIndex) {
-    const connection = this.mapData.local?.connections?.[connectionIndex];
-    const panel = this.container.querySelector('#action-panel');
-    const title = this.container.querySelector('#action-panel-title');
-    const body = this.container.querySelector('#action-panel-body');
-
-    if (!panel || !title || !body) return;
-
-    title.textContent = locationName;
-
-    const direction = connection?.direction;
-    
-    // Primary action is now direct movement via API
-    body.innerHTML = `
-      <button class="quick-action-btn primary" data-action="move" data-target-id="${targetId}" data-target-name="${locationName}">
-        🚶 Go to ${locationName}
-      </button>
-      <button class="quick-action-btn" data-action="look" data-target="${locationName}">
-        👀 Look toward ${locationName}
-      </button>
-      <button class="quick-action-btn" data-action="ask" data-target="${locationName}">
-        ❓ What do I know about ${locationName}?
-      </button>
-    `;
-
-    // Attach click handlers
-    body.querySelectorAll('.quick-action-btn').forEach(btn => {
-      btn.addEventListener('click', async () => {
-        const action = btn.dataset.action;
-        
-        if (action === 'move') {
-          // Use movement API directly
-          await this.moveToLocation(btn.dataset.targetId, btn.dataset.targetName);
-        } else if (action === 'look') {
-          this.executeCustomAction(`I look toward ${btn.dataset.target}`);
-        } else if (action === 'ask') {
-          this.executeCustomAction(`What do I know about ${btn.dataset.target}?`);
-        }
-      });
-    });
-
-    panel.style.display = 'block';
-  }
-
   /**
    * Show actions for a location clicked on the SVG map
    */

@@ -34,15 +34,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
 
-    // Close the dropdown if the user clicks outside of it
-    window.onclick = (event) => {
-        if (!event.target.matches('#user-menu-button') && !event.target.matches('#username') && !event.target.matches('.arrow')) {
-            if (userDropdown.classList.contains('show')) {
-                userDropdown.classList.remove('show');
-            }
-        }
-    };
-
     // Show spinner
     function showSpinner() {
         loadingSpinner.style.display = 'flex';
@@ -60,8 +51,13 @@ document.addEventListener('DOMContentLoaded', () => {
         dropdown.classList.toggle('show');
     });
 
-    // Close the dropdown if the user clicks outside of it
+    // Close dropdowns if the user clicks outside of them
     window.addEventListener('click', (event) => {
+        if (!event.target.matches('#user-menu-button') && !event.target.matches('#username') && !event.target.matches('.arrow')) {
+            if (userDropdown.classList.contains('show')) {
+                userDropdown.classList.remove('show');
+            }
+        }
         if (!event.target.matches('#create-character-btn') && !event.target.closest('.dropdown')) {
             document.querySelectorAll('.dropdown').forEach(d => d.classList.remove('show'));
         }

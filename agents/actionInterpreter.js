@@ -1,5 +1,4 @@
 const fetch = require('node-fetch');
-const http = require('http');
 const Plot = require('../db/models/Plot');
 const Region = require('../db/models/Region');
 const Settlement = require('../db/models/Settlement');
