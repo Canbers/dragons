@@ -17,7 +17,177 @@ function showToast(message, type = 'info') {
     setTimeout(() => toast.remove(), 3000);
 }
 
-document.addEventListener('DOMContentLoaded', () => {
+// ========== INIT OVERLAY FUNCTIONS ==========
+
+function showInitOverlay() {
+    const overlay = document.getElementById('game-init-overlay');
+    if (overlay) overlay.style.display = 'flex';
+}
+
+function hideInitOverlay() {
+    const overlay = document.getElementById('game-init-overlay');
+    if (overlay) {
+        overlay.classList.add('fade-out');
+        setTimeout(() => {
+            overlay.style.display = 'none';
+            overlay.classList.remove('fade-out');
+        }, 600);
+    }
+}
+
+function updateInitProgress(step, total, message) {
+    const fill = document.getElementById('init-progress-fill');
+    const msg = document.getElementById('init-progress-message');
+    if (fill) fill.style.width = `${(step / total) * 100}%`;
+    if (msg) msg.textContent = message;
+}
+
+async function runInitOverlay(initPlotId) {
+    return new Promise(async (resolve) => {
+        showInitOverlay();
+        updateInitProgress(0, 4, 'Connecting to the world...');
+
+        const retryBtn = document.getElementById('init-retry-btn');
+
+        try {
+            const response = await fetch(`/api/plot/${initPlotId}/initialize`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            });
+
+            if (!response.ok) {
+                // Non-SSE response (already ready or initializing)
+                const data = await response.json();
+                if (data.status === 'ready') {
+                    hideInitOverlay();
+                    resolve();
+                    return;
+                }
+            }
+
+            const contentType = response.headers.get('content-type') || '';
+            if (contentType.includes('application/json')) {
+                // Already ready or initializing — not SSE
+                const data = await response.json();
+                if (data.status === 'ready') {
+                    hideInitOverlay();
+                    resolve();
+                    return;
+                }
+                if (data.status === 'initializing') {
+                    await waitForInitialization(initPlotId);
+                    hideInitOverlay();
+                    resolve();
+                    return;
+                }
+            }
+
+            // Read SSE stream
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+
+            while (true) {
+                const { value, done } = await reader.read();
+                if (done) break;
+
+                const text = decoder.decode(value);
+                const lines = text.split('\n');
+
+                for (const line of lines) {
+                    if (line.startsWith('data: ')) {
+                        try {
+                            const data = JSON.parse(line.slice(6));
+
+                            if (data.type === 'progress') {
+                                updateInitProgress(data.step, data.total, data.message);
+                            }
+
+                            if (data.type === 'complete') {
+                                updateInitProgress(3, 3, data.message);
+                                setTimeout(() => {
+                                    hideInitOverlay();
+                                    resolve();
+                                }, 800);
+                                return;
+                            }
+
+                            if (data.type === 'error') {
+                                updateInitProgress(0, 4, data.message);
+                                if (retryBtn) {
+                                    retryBtn.style.display = 'inline-block';
+                                    retryBtn.onclick = async () => {
+                                        retryBtn.style.display = 'none';
+                                        await runInitOverlay(initPlotId);
+                                        resolve();
+                                    };
+                                }
+                                return;
+                            }
+                        } catch (e) {
+                            // Ignore parse errors
+                        }
+                    }
+                }
+            }
+
+            // Stream ended without explicit complete — check status
+            hideInitOverlay();
+            resolve();
+        } catch (err) {
+            console.error('[Init] SSE error:', err);
+            updateInitProgress(0, 4, 'Connection error. Click retry.');
+            if (retryBtn) {
+                retryBtn.style.display = 'inline-block';
+                retryBtn.onclick = async () => {
+                    retryBtn.style.display = 'none';
+                    await runInitOverlay(initPlotId);
+                    resolve();
+                };
+            }
+        }
+    });
+}
+
+async function waitForInitialization(initPlotId) {
+    showInitOverlay();
+    updateInitProgress(2, 4, 'Initialization in progress...');
+
+    const MAX_POLLS = 60; // 2s x 60 = 2 minutes max
+    let pollCount = 0;
+
+    return new Promise((resolve) => {
+        const pollInterval = setInterval(async () => {
+            pollCount++;
+            try {
+                // cache: 'no-store' prevents 304 cached responses
+                const res = await fetch(`/api/plots/${initPlotId}`, { cache: 'no-store' });
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.status === 'ready' || data.status === undefined) {
+                        clearInterval(pollInterval);
+                        updateInitProgress(4, 4, 'Ready!');
+                        setTimeout(() => {
+                            hideInitOverlay();
+                            resolve();
+                        }, 500);
+                    } else if (data.status === 'error') {
+                        clearInterval(pollInterval);
+                        runInitOverlay(initPlotId).then(resolve);
+                    } else if (pollCount >= MAX_POLLS) {
+                        // Stuck at 'initializing' too long — force retry
+                        clearInterval(pollInterval);
+                        console.warn('[Init] Timed out waiting for initialization');
+                        runInitOverlay(initPlotId).then(resolve);
+                    }
+                }
+            } catch (err) {
+                console.error('[Init] Poll error:', err);
+            }
+        }, 2000);
+    });
+}
+
+document.addEventListener('DOMContentLoaded', async () => {
     setupAuthUI();
     const urlParams = new URLSearchParams(window.location.search);
     plotId = urlParams.get('plotId'); // Assign to global plotId
@@ -28,7 +198,27 @@ document.addEventListener('DOMContentLoaded', () => {
         window.location.href = '/profile';
         return;
     }
-    
+
+    // Check plot status before initializing the game
+    let plotStatus = null;
+    try {
+        const statusRes = await fetch(`/api/plots/${plotId}`, { cache: 'no-store' });
+        if (statusRes.ok) {
+            const plotData = await statusRes.json();
+            plotStatus = plotData.status;
+        }
+    } catch (err) {
+        console.error('Error checking plot status:', err);
+    }
+
+    // Handle plot initialization if needed
+    if (plotStatus === 'created' || plotStatus === 'error') {
+        await runInitOverlay(plotId);
+    } else if (plotStatus === 'initializing') {
+        await waitForInitialization(plotId);
+    }
+    // status === 'ready' or undefined (legacy) — proceed normally
+
     // Initialize MapViewer
     if (typeof MapViewer !== 'undefined') {
         window.mapViewer = new MapViewer('map-viewer-container');
@@ -678,30 +868,73 @@ async function fetchGameInfo(plotId, characterId) {
 
     submitBtn.addEventListener('click', submitAction);
 
-    // Quick action buttons
-    document.querySelectorAll('.quick-action').forEach(button => {
-        button.addEventListener('click', () => {
-            const action = button.dataset.action;
-            const actionType = button.dataset.type;
-            
-            // Set the input type radio
-            const radioToSelect = document.querySelector(`input[name="inputType"][value="${actionType}"]`);
-            if (radioToSelect) radioToSelect.checked = true;
-            
-            // Set the input text and submit
-            inputField.value = action;
+    // Quick action buttons - use event delegation so we never need to rebind
+    document.getElementById('quick-actions').addEventListener('click', (e) => {
+        const button = e.target.closest('.quick-action');
+        if (button && button.dataset.action) {
+            inputField.value = button.dataset.action;
             submitAction();
-        });
+        }
     });
+
+    // Emoji picker for dynamic action labels
+    function pickEmoji(label) {
+        const lower = label.toLowerCase();
+        if (lower.includes('talk') || lower.includes('speak') || lower.includes('ask') || lower.includes('greet') || lower.includes('chat')) return '💬';
+        if (lower.includes('fight') || lower.includes('attack') || lower.includes('strike') || lower.includes('combat')) return '⚔️';
+        if (lower.includes('search') || lower.includes('examine') || lower.includes('inspect') || lower.includes('investigate')) return '🔍';
+        if (lower.includes('buy') || lower.includes('shop') || lower.includes('trade') || lower.includes('sell') || lower.includes('purchase')) return '🛒';
+        if (lower.includes('steal') || lower.includes('sneak') || lower.includes('hide') || lower.includes('pickpocket')) return '🤫';
+        if (lower.includes('eat') || lower.includes('drink') || lower.includes('food') || lower.includes('tavern')) return '🍺';
+        if (lower.includes('read') || lower.includes('book') || lower.includes('scroll') || lower.includes('note')) return '📜';
+        if (lower.includes('open') || lower.includes('door') || lower.includes('enter') || lower.includes('go')) return '🚪';
+        if (lower.includes('take') || lower.includes('pick up') || lower.includes('grab') || lower.includes('collect')) return '✋';
+        if (lower.includes('use') || lower.includes('equip') || lower.includes('wield')) return '🛠️';
+        if (lower.includes('climb') || lower.includes('jump') || lower.includes('swim')) return '🧗';
+        if (lower.includes('pray') || lower.includes('meditate') || lower.includes('temple') || lower.includes('shrine')) return '🙏';
+        if (lower.includes('explore') || lower.includes('wander') || lower.includes('venture')) return '🧭';
+        if (lower.includes('listen') || lower.includes('eavesdrop') || lower.includes('hear')) return '👂';
+        return '➡️';
+    }
+
+    // Update dynamic action buttons with AI-suggested actions
+    function updateDynamicActions(actions) {
+        console.log('[QuickActions] Updating dynamic buttons:', actions);
+        const dynamicButtons = document.querySelectorAll('.dynamic-action');
+        actions.forEach((action, i) => {
+            if (dynamicButtons[i] && action.label && action.action) {
+                const btn = dynamicButtons[i];
+                const emoji = pickEmoji(action.label);
+                btn.textContent = `${emoji} ${action.label}`;
+                btn.dataset.action = action.action;
+                btn.classList.add('dynamic-updating');
+                setTimeout(() => btn.classList.remove('dynamic-updating'), 500);
+            }
+        });
+    }
+
+    // Ask GM button
+    const askGmBtn = document.getElementById('ask-gm-btn');
+    if (askGmBtn) {
+        askGmBtn.addEventListener('click', () => {
+            const text = inputField.value.trim();
+            if (text) {
+                submitAction('askGM');
+            } else {
+                inputField.placeholder = 'Type your question for the GM, then click ? again';
+                inputField.focus();
+            }
+        });
+    }
 
     let isSubmitting = false; // Track if we're currently submitting
 
-    async function submitAction() {
+    async function submitAction(overrideType) {
         if (isSubmitting) return; // Prevent double-submit
-        
+
         try {
             const inputText = inputField.value.trim();
-            const inputType = document.querySelector('input[name="inputType"]:checked').value;
+            const inputType = overrideType || 'play';
             if (inputText) {
                 // Disable inputs while streaming
                 isSubmitting = true;
@@ -769,13 +1002,35 @@ async function fetchGameInfo(plotId, characterId) {
                         if (line.startsWith('data: ')) {
                             try {
                                 const data = JSON.parse(line.slice(6));
-                                
+
+                                if (data.tool_call) {
+                                    // Show tool activity as a status indicator
+                                    let toolStatus = document.querySelector(`#${streamId} .tool-status`);
+                                    if (!toolStatus) {
+                                        toolStatus = document.createElement('div');
+                                        toolStatus.className = 'tool-status';
+                                        const systemText = document.querySelector(`#${streamId} .systemText`);
+                                        systemText.insertBefore(toolStatus, streamContainer);
+                                    }
+                                    toolStatus.textContent = data.tool_call;
+                                    gameLog.scrollTop = gameLog.scrollHeight;
+                                }
+
                                 if (data.chunk) {
+                                    // Remove tool status once narrative starts
+                                    const toolStatus = document.querySelector(`#${streamId} .tool-status`);
+                                    if (toolStatus) toolStatus.remove();
+
                                     fullMessage += data.chunk;
                                     streamContainer.textContent = fullMessage;
                                     gameLog.scrollTop = gameLog.scrollHeight;
                                 }
-                                
+
+                                if (data.suggested_actions) {
+                                    console.log('[SSE] Received suggested_actions:', data.suggested_actions);
+                                    updateDynamicActions(data.suggested_actions);
+                                }
+
                                 if (data.done) {
                                     // Refresh map viewer after action completes
                                     if (window.mapViewer) {
@@ -786,7 +1041,7 @@ async function fetchGameInfo(plotId, characterId) {
                                     timestampEl.style.display = 'inline';
                                     document.getElementById(streamId).classList.remove('streaming');
                                 }
-                                
+
                                 if (data.error) {
                                     streamContainer.textContent = `Error: ${data.error}`;
                                     streamCursor.style.display = 'none';
@@ -826,6 +1081,7 @@ async function fetchGameInfo(plotId, characterId) {
             submitBtn.disabled = false;
             inputField.disabled = false;
             submitBtn.textContent = 'Send';
+            inputField.placeholder = 'What do you do? (actions, speech, or both)';
             document.querySelectorAll('.quick-action').forEach(btn => btn.disabled = false);
             inputField.focus();
         }

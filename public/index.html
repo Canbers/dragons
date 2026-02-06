@@ -48,22 +48,23 @@
             
             <!-- Quick Actions -->
             <div id="quick-actions">
-                <button class="quick-action" data-action="I look around carefully" data-type="action">👀 Look</button>
-                <button class="quick-action" data-action="I approach someone nearby and greet them" data-type="speak">💬 Talk</button>
-                <button class="quick-action" data-action="I check my belongings and inventory" data-type="action">🎒 Inv</button>
-                <button class="quick-action" data-action="I find a safe spot to rest and catch my breath" data-type="action">💤 Rest</button>
+                <div id="dynamic-actions">
+                    <button class="quick-action dynamic-action" data-action="I approach someone nearby and greet them">💬 Talk</button>
+                    <button class="quick-action dynamic-action" data-action="I check my belongings and inventory">🎒 Inventory</button>
+                    <button class="quick-action dynamic-action" data-action="I explore the area further">🔍 Explore</button>
+                </div>
+                <div id="static-actions">
+                    <button class="quick-action static-action" data-action="I look around carefully">👀 Look</button>
+                    <button class="quick-action static-action" data-action="I find a safe spot to rest and catch my breath">💤 Rest</button>
+                </div>
             </div>
-            
+
             <!-- Input Area -->
             <div id="input-area">
-                <div id="input-selector">
-                    <label><input type="radio" name="inputType" value="action" checked> Action</label>
-                    <label><input type="radio" name="inputType" value="speak"> Speak</label>
-                    <label><input type="radio" name="inputType" value="askGM"> Ask GM</label>
-                </div>
                 <div id="input-row">
-                    <input id="chat-box" type="text" placeholder="What do you do?">
-                    <button id="submit-btn">→</button>
+                    <input id="chat-box" type="text" placeholder="What do you do? (actions, speech, or both)">
+                    <button id="submit-btn">Send</button>
+                    <button id="ask-gm-btn" title="Step out of character to ask the Game Master a question about how the game works">?</button>
                 </div>
             </div>
         </div>
@@ -180,6 +181,21 @@
     <div class="modal-content">
         <span class="close" id="close-settlement-modal">&times;</span>
         <div id="settlement-details"></div>
+    </div>
+</div>
+
+<!-- Game Init Overlay -->
+<div id="game-init-overlay" style="display: none;">
+    <div class="init-overlay-content">
+        <div class="init-dragon-icon">&#x1F409;</div>
+        <h2 class="init-title">Preparing Your Adventure</h2>
+        <div class="init-progress-container">
+            <div class="init-progress-bar">
+                <div id="init-progress-fill" class="init-progress-fill"></div>
+            </div>
+            <p id="init-progress-message" class="init-message">Connecting to the world...</p>
+        </div>
+        <button id="init-retry-btn" class="btn-primary" style="display: none;">Retry</button>
     </div>
 </div>
 

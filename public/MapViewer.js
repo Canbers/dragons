@@ -90,7 +90,8 @@ class MapViewer {
           description: c.description,
           distance: c.distance,
           targetId: c.targetId,
-          discovered: c.discovered
+          discovered: c.discovered,
+          type: c.type || 'other'
         })),
         discoveredLocations: data.discoveredLocations || []
       },
@@ -196,13 +197,11 @@ class MapViewer {
 
   renderLocalView() {
     const local = this.mapData.local || {};
-    const connections = local.connections || [];
     const discovered = local.discoveredLocations || [];
-    
-    // Type icon for current location
+
     const typeIcon = this.getLocationTypeIcon(local.currentType);
-    
-    if (connections.length === 0 && discovered.length <= 1) {
+
+    if (discovered.length === 0) {
       return `
         <div class="local-view">
           <div class="current-location-header">
@@ -218,17 +217,15 @@ class MapViewer {
       `;
     }
 
-    // Render the radial connection graph
-    const svg = this.createConnectionGraph(local);
-    
+    const svgMap = this.buildSettlementSvg(local, discovered);
+
     return `
       <div class="local-view">
         <div class="current-location-header">
           <h3>${typeIcon} ${local.current || 'Unknown Location'}</h3>
           <p class="settlement-name">in ${local.settlementName || 'Unknown Settlement'}</p>
         </div>
-        ${local.currentDescription ? `<p class="location-description">${local.currentDescription}</p>` : ''}
-        ${svg}
+        ${svgMap}
         <div class="discovered-count">
           <span>${discovered.length} location${discovered.length !== 1 ? 's' : ''} discovered</span>
         </div>
@@ -256,139 +253,191 @@ class MapViewer {
     return icons[type] || icons.other;
   }
 
-  createConnectionGraph(local) {
-    const connections = local.connections || [];
-    if (connections.length === 0) {
-      return '';
+  /**
+   * Direction vectors for estimating fog node positions
+   */
+  static DIRECTION_VECTORS = {
+    north: { x: 0, y: -1 }, south: { x: 0, y: 1 },
+    east: { x: 1, y: 0 }, west: { x: -1, y: 0 },
+    northeast: { x: 0.7, y: -0.7 }, northwest: { x: -0.7, y: -0.7 },
+    southeast: { x: 0.7, y: 0.7 }, southwest: { x: -0.7, y: 0.7 },
+    up: { x: 0.3, y: -0.5 }, down: { x: -0.3, y: 0.5 },
+    inside: { x: 0.3, y: 0 }, outside: { x: -0.3, y: 0 }
+  };
+
+  static DISTANCE_SCALE = { adjacent: 1, close: 1.5, far: 2 };
+
+  static TYPE_COLORS = {
+    gate: '#8B4513', market: '#DAA520', tavern: '#CD853F', temple: '#9370DB',
+    plaza: '#4682B4', shop: '#B8860B', residence: '#708090', landmark: '#CD5C5C',
+    dungeon: '#483D8B', district: '#6B8E23', docks: '#4169E1', barracks: '#A0522D',
+    palace: '#9932CC', other: '#808080'
+  };
+
+  /**
+   * Build an SVG settlement map from discovered locations
+   */
+  buildSettlementSvg(local, discoveredLocations) {
+    const SVG_W = 348;
+    const SVG_H = 340;
+    const PAD = 40;
+
+    // 1. Collect all nodes: discovered + fog (undiscovered targets from connections)
+    const discoveredMap = new Map(); // nameKey → location data
+    for (const loc of discoveredLocations) {
+      discoveredMap.set(loc.name.toLowerCase(), loc);
     }
 
-    const width = 500;
-    const height = 400;
-    const centerX = width / 2;
-    const centerY = height / 2;
-    const radius = 140;
+    const fogNodes = new Map(); // nameKey → { x, y, name, type }
+    for (const loc of discoveredLocations) {
+      for (const conn of (loc.connections || [])) {
+        if (!conn.locationName) continue;
+        const targetKey = conn.locationName.toLowerCase();
+        if (discoveredMap.has(targetKey) || fogNodes.has(targetKey)) continue;
 
-    // Calculate positions for connected locations
-    const angleStep = (2 * Math.PI) / Math.max(connections.length, 1);
-    const nodes = connections.map((conn, index) => {
-      const angle = angleStep * index - Math.PI / 2; // Start at top
-      return {
-        x: centerX + radius * Math.cos(angle),
-        y: centerY + radius * Math.sin(angle),
-        connection: conn
-      };
-    });
+        // Fog node: estimate position
+        let fogX, fogY;
+        if (conn.targetCoordinates) {
+          fogX = conn.targetCoordinates.x;
+          fogY = conn.targetCoordinates.y;
+        } else {
+          const srcCoords = loc.coordinates || { x: 0, y: 0 };
+          const dir = MapViewer.DIRECTION_VECTORS[conn.direction] || { x: 0.5, y: 0.5 };
+          const scale = MapViewer.DISTANCE_SCALE[conn.distance] || 1;
+          fogX = srcCoords.x + dir.x * scale;
+          fogY = srcCoords.y + dir.y * scale;
+        }
+        fogNodes.set(targetKey, {
+          x: fogX, y: fogY,
+          name: conn.locationName,
+          type: conn.targetType || 'other',
+          targetId: conn.targetId
+        });
+      }
+    }
 
-    // Build SVG
-    let svgContent = `<svg width="100%" height="${height}" viewBox="0 0 ${width} ${height}" class="map-graph">`;
+    // 2. Collect all positions for bounding box
+    const allPoints = [];
+    for (const loc of discoveredLocations) {
+      const coords = loc.coordinates || { x: 0, y: 0 };
+      allPoints.push({ x: coords.x, y: coords.y });
+    }
+    for (const fog of fogNodes.values()) {
+      allPoints.push({ x: fog.x, y: fog.y });
+    }
 
-    // Draw connections (lines)
-    nodes.forEach(node => {
-      svgContent += `
-        <line 
-          x1="${centerX}" 
-          y1="${centerY}" 
-          x2="${node.x}" 
-          y2="${node.y}" 
-          stroke="var(--border-color, #444)" 
-          stroke-width="2"
-          opacity="0.6"
-        />
-      `;
-    });
+    if (allPoints.length === 0) return '';
 
-    // Draw current location (center node)
-    svgContent += `
-      <circle 
-        cx="${centerX}" 
-        cy="${centerY}" 
-        r="35" 
-        fill="var(--accent-color, #4CAF50)" 
-        stroke="var(--text-primary, #fff)" 
-        stroke-width="3"
-        class="location-node current"
-      />
-      <text 
-        x="${centerX}" 
-        y="${centerY - 45}" 
-        text-anchor="middle" 
-        fill="var(--text-primary, #fff)" 
-        font-weight="bold"
-        font-size="12"
-      >
-        📍 You Are Here
-      </text>
-    `;
+    // 3. Compute bounding box → viewport transform
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const p of allPoints) {
+      if (p.x < minX) minX = p.x;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.y > maxY) maxY = p.y;
+    }
 
-    // Draw connected location nodes
-    nodes.forEach((node, index) => {
-      const conn = node.connection;
-      const directionEmoji = this.getDirectionEmoji(conn.direction);
-      const hasTarget = conn.targetId !== null;
-      const nodeClass = hasTarget ? 'location-node clickable' : 'location-node undiscovered';
-      const fillColor = hasTarget ? 'var(--bg-secondary, #2a2a4a)' : 'var(--bg-tertiary, #1a1a3a)';
-      
-      svgContent += `
-        <circle 
-          cx="${node.x}" 
-          cy="${node.y}" 
-          r="28" 
-          fill="${fillColor}"
-          stroke="${hasTarget ? 'var(--accent-secondary, #6366f1)' : 'var(--border-color, #444)'}"
-          stroke-width="2"
-          class="${nodeClass}"
-          data-location="${conn.name}"
-          data-target-id="${conn.targetId || ''}"
-          data-index="${index}"
-          style="cursor: ${hasTarget ? 'pointer' : 'not-allowed'};"
-        />
-        <text 
-          x="${node.x}" 
-          y="${node.y - 38}" 
-          text-anchor="middle" 
-          fill="var(--text-muted, #999)" 
-          font-size="11"
-          pointer-events="none"
-        >
-          ${directionEmoji} ${conn.direction || ''}
-        </text>
-        <text 
-          x="${node.x}" 
-          y="${node.y + 45}" 
-          text-anchor="middle" 
-          fill="var(--text-primary, #fff)" 
-          font-size="11"
-          font-weight="500"
-          pointer-events="none"
-        >
-          ${this.truncateName(conn.name, 15)}
-        </text>
-        ${conn.distance && conn.distance !== 'adjacent' ? `
-          <text 
-            x="${node.x}" 
-            y="${node.y + 58}" 
-            text-anchor="middle" 
-            fill="var(--text-muted, #666)" 
-            font-size="9"
-            pointer-events="none"
-          >
-            (${conn.distance})
-          </text>
-        ` : ''}
-      `;
-    });
+    const rangeX = maxX - minX || 1;
+    const rangeY = maxY - minY || 1;
+    const drawW = SVG_W - PAD * 2;
+    const drawH = SVG_H - PAD * 2;
+    const scale = Math.min(drawW / rangeX, drawH / rangeY);
+    const offsetX = PAD + (drawW - rangeX * scale) / 2;
+    const offsetY = PAD + (drawH - rangeY * scale) / 2;
 
-    svgContent += '</svg>';
-    return svgContent;
+    const tx = (x) => offsetX + (x - minX) * scale;
+    const ty = (y) => offsetY + (y - minY) * scale;
+
+    // 4. Build SVG layers
+    let roadsHtml = '';
+    let fogRoadsHtml = '';
+    let fogNodesHtml = '';
+    let markersHtml = '';
+
+    // Roads between discovered locations
+    const drawnRoads = new Set();
+    for (const loc of discoveredLocations) {
+      const srcCoords = loc.coordinates || { x: 0, y: 0 };
+      for (const conn of (loc.connections || [])) {
+        if (!conn.locationName) continue;
+        const targetKey = conn.locationName.toLowerCase();
+        const roadKey = [loc.name.toLowerCase(), targetKey].sort().join('|');
+        if (drawnRoads.has(roadKey)) continue;
+        drawnRoads.add(roadKey);
+
+        if (discoveredMap.has(targetKey)) {
+          // Solid road between two discovered locations
+          const targetLoc = discoveredMap.get(targetKey);
+          const tgtCoords = targetLoc.coordinates || { x: 0, y: 0 };
+          roadsHtml += `<line class="road" x1="${tx(srcCoords.x)}" y1="${ty(srcCoords.y)}" x2="${tx(tgtCoords.x)}" y2="${ty(tgtCoords.y)}"/>`;
+        } else if (fogNodes.has(targetKey)) {
+          // Fog road to undiscovered target
+          const fog = fogNodes.get(targetKey);
+          fogRoadsHtml += `<line class="road fog-road" x1="${tx(srcCoords.x)}" y1="${ty(srcCoords.y)}" x2="${tx(fog.x)}" y2="${ty(fog.y)}"/>`;
+        }
+      }
+    }
+
+    // Fog node circles
+    for (const [key, fog] of fogNodes) {
+      const fx = tx(fog.x);
+      const fy = ty(fog.y);
+      fogNodesHtml += `
+        <g class="fog-node">
+          <circle cx="${fx}" cy="${fy}" r="12" class="fog-circle"/>
+          <text x="${fx}" y="${fy + 4}" class="fog-label">?</text>
+        </g>`;
+    }
+
+    // Location markers (discovered)
+    for (const loc of discoveredLocations) {
+      const coords = loc.coordinates || { x: 0, y: 0 };
+      const cx = tx(coords.x);
+      const cy = ty(coords.y);
+      const icon = this.getLocationTypeIcon(loc.type);
+      const color = MapViewer.TYPE_COLORS[loc.type] || MapViewer.TYPE_COLORS.other;
+      const displayName = this.truncateName(loc.name, 16);
+      const isConnected = (local.connections || []).some(c =>
+        c.name?.toLowerCase() === loc.name.toLowerCase()
+      );
+      const isCurrent = loc.isCurrent;
+
+      // Current location glow
+      let glowHtml = '';
+      if (isCurrent) {
+        glowHtml = `<circle cx="${cx}" cy="${cy}" r="22" class="current-glow"/>`;
+      }
+
+      const markerClass = isCurrent ? 'marker current' : (isConnected ? 'marker connected' : 'marker');
+
+      markersHtml += `
+        <g class="location-marker ${isCurrent ? '' : 'clickable'}"
+           data-location="${this.escapeHtml(loc.name)}"
+           data-location-id="${loc.id || ''}"
+           data-is-current="${isCurrent ? 'true' : 'false'}"
+           data-is-connected="${isConnected ? 'true' : 'false'}">
+          ${glowHtml}
+          <circle cx="${cx}" cy="${cy}" r="16" class="${markerClass}" fill="${color}"/>
+          <text x="${cx}" y="${cy + 5}" class="marker-icon">${icon}</text>
+          <text x="${cx}" y="${cy + 30}" class="marker-label">${this.escapeHtml(displayName)}</text>
+        </g>`;
+    }
+
+    return `
+      <div class="settlement-map-container">
+        <svg viewBox="0 0 ${SVG_W} ${SVG_H}" class="settlement-map" xmlns="http://www.w3.org/2000/svg">
+          <rect x="0" y="0" width="${SVG_W}" height="${SVG_H}" rx="8" class="map-bg"/>
+          ${roadsHtml}
+          ${fogRoadsHtml}
+          ${fogNodesHtml}
+          ${markersHtml}
+        </svg>
+      </div>`;
   }
 
-  getDirectionEmoji(direction) {
-    const emojis = {
-      'north': '⬆️', 'south': '⬇️', 'east': '➡️', 'west': '⬅️',
-      'northeast': '↗️', 'northwest': '↖️', 'southeast': '↘️', 'southwest': '↙️',
-      'up': '🔼', 'down': '🔽', 'inside': '🚪', 'outside': '🚪'
-    };
-    return emojis[direction] || '•';
+  escapeHtml(str) {
+    if (!str) return '';
+    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
 
   truncateName(name, maxLength) {
@@ -469,16 +518,18 @@ class MapViewer {
       });
     });
 
-    // Location node clicks (SVG) - use event delegation
+    // SVG location marker clicks - use event delegation
     const mapContent = this.container.querySelector('.map-content');
     if (mapContent) {
       mapContent.addEventListener('click', (e) => {
-        const node = e.target.closest('.location-node.clickable');
-        if (node && !this.isMoving) {
-          const locationName = node.dataset.location;
-          const targetId = node.dataset.targetId;
-          const index = parseInt(node.dataset.index);
-          this.showLocationActions(locationName, targetId, index);
+        const marker = e.target.closest('.location-marker');
+        if (marker && !this.isMoving) {
+          const locationName = marker.dataset.location;
+          const locationId = marker.dataset.locationId;
+          const isCurrent = marker.dataset.isCurrent === 'true';
+          if (!isCurrent) {
+            this.showMapLocationActions(locationName, locationId);
+          }
         }
       });
     }
@@ -551,6 +602,65 @@ class MapViewer {
         
         if (action === 'move') {
           // Use movement API directly
+          await this.moveToLocation(btn.dataset.targetId, btn.dataset.targetName);
+        } else if (action === 'look') {
+          this.executeCustomAction(`I look toward ${btn.dataset.target}`);
+        } else if (action === 'ask') {
+          this.executeCustomAction(`What do I know about ${btn.dataset.target}?`);
+        }
+      });
+    });
+
+    panel.style.display = 'block';
+  }
+
+  /**
+   * Show actions for a location clicked on the SVG map
+   */
+  showMapLocationActions(locationName, locationId) {
+    const panel = this.container.querySelector('#action-panel');
+    const title = this.container.querySelector('#action-panel-title');
+    const body = this.container.querySelector('#action-panel-body');
+
+    if (!panel || !title || !body) return;
+
+    title.textContent = locationName;
+
+    // Check if this location is directly connected to current
+    const connection = (this.mapData.local?.connections || []).find(c =>
+      c.name?.toLowerCase() === locationName.toLowerCase()
+    );
+
+    let actionsHtml = '';
+    if (connection) {
+      actionsHtml = `
+        <button class="quick-action-btn primary" data-action="move" data-target-id="${connection.targetId || locationId}" data-target-name="${locationName}">
+          Go to ${locationName}
+        </button>
+        <button class="quick-action-btn" data-action="look" data-target="${locationName}">
+          Look toward ${locationName}
+        </button>
+        <button class="quick-action-btn" data-action="ask" data-target="${locationName}">
+          What do I know about ${locationName}?
+        </button>
+      `;
+    } else {
+      actionsHtml = `
+        <button class="quick-action-btn" data-action="look" data-target="${locationName}">
+          Look toward ${locationName}
+        </button>
+        <button class="quick-action-btn" data-action="ask" data-target="${locationName}">
+          What do I know about ${locationName}?
+        </button>
+      `;
+    }
+
+    body.innerHTML = actionsHtml;
+
+    body.querySelectorAll('.quick-action-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const action = btn.dataset.action;
+        if (action === 'move') {
           await this.moveToLocation(btn.dataset.targetId, btn.dataset.targetName);
         } else if (action === 'look') {
           this.executeCustomAction(`I look toward ${btn.dataset.target}`);
@@ -742,10 +852,6 @@ class MapViewer {
    */
   async executeCustomAction(actionText) {
     this.hideActionPanel();
-    
-    // Set input type to action
-    const actionRadio = document.querySelector('input[name="inputType"][value="action"]');
-    if (actionRadio) actionRadio.checked = true;
     
     // Set input text
     const inputField = document.getElementById('chat-box');

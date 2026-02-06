@@ -23,7 +23,8 @@ console.log('  [6/10] Loading models...');
 const Plot = require('./db/models/Plot.js');
 const Quest = require('./db/models/Quest.js');
 const Character = require('./db/models/Character.js');
-const Region = require('./db/models/Region'); 
+const Region = require('./db/models/Region');
+const Ecosystem = require('./db/models/Ecosystem');
 const Settlement = require('./db/models/Settlement.js');
 const World = require('./db/models/World.js');
 const GameLog = require('./db/models/GameLog.js');
@@ -31,6 +32,7 @@ const actionInterpreter = require('./agents/actionInterpreter');
 const { summarizeLogs } = require('./services/gptService');
 const { getWorldAndRegionDetails, getInitialQuests } = require('./agents/world/storyTeller.js');
 const movementService = require('./services/movementService');
+const gameAgent = require('./services/gameAgent');
 
 
 // MongoDB connection
@@ -44,6 +46,8 @@ mongoose.connect(process.env.MONGO_URL, {
 const allowedOrigins = [
     'http://localhost:3000',
     'https://localhost:3000',
+    `http://localhost:${process.env.PORT || 3000}`,
+    `https://localhost:${process.env.PORT || 3000}`,
     'https://dragons.canby.ca',
     process.env.AUTH0_ISSUER_BASE_URL // Include Auth0 callback URL
 ];
@@ -246,6 +250,84 @@ app.get('/api/region/:regionId', ensureAuthenticated, async (req, res) => {
         res.json(region); // Return the full region record
     } catch (error) {
         res.status(500).json({ error: error.message });
+    }
+});
+
+// Region selection screen: returns regions instantly from DB (no GPT)
+app.get('/api/worlds/:worldId/region-selection', ensureAuthenticated, async (req, res) => {
+    try {
+        const { worldId } = req.params;
+        if (!mongoose.Types.ObjectId.isValid(worldId)) {
+            return res.status(400).send('Invalid worldId format');
+        }
+
+        const regions = await Region.find({ world: worldId }).populate('ecosystem');
+        const describedRegions = regions.filter(r => r.described && r.name);
+
+        if (describedRegions.length === 0) {
+            return res.status(404).json({ error: 'No described regions found in this world' });
+        }
+
+        const result = describedRegions.map(r => ({
+            _id: r._id,
+            name: r.name,
+            short: r.short || r.description || '',
+            ecosystem: { name: r.ecosystem?.name || 'Unknown' },
+            hook: null
+        }));
+
+        res.json(result);
+    } catch (error) {
+        console.error('[RegionSelection] Error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Generate adventure hooks for regions (called async by frontend after cards render)
+app.get('/api/worlds/:worldId/region-hooks', ensureAuthenticated, async (req, res) => {
+    try {
+        const { worldId } = req.params;
+        if (!mongoose.Types.ObjectId.isValid(worldId)) {
+            return res.status(400).send('Invalid worldId format');
+        }
+
+        const world = await World.findById(worldId);
+        if (!world) {
+            return res.status(404).send('World not found');
+        }
+
+        const regions = await Region.find({ world: worldId }).populate('ecosystem');
+        const describedRegions = regions.filter(r => r.described && r.name);
+
+        const regionList = describedRegions.map(r =>
+            `- ${r.name}: ${r.short || r.description || 'A mysterious region'} (Ecosystem: ${r.ecosystem?.name || 'unknown'})`
+        ).join('\n');
+
+        const hookPrompt = `You are creating adventure hooks for a tabletop RPG world called "${world.name}".
+${world.description ? `World description: ${world.description}` : ''}
+
+For each region below, write a 1-2 sentence adventure hook that entices a player to start their journey there. The hook should hint at danger, mystery, or opportunity specific to that region.
+
+Regions:
+${regionList}
+
+Respond in JSON format:
+{
+  "hooks": {
+    "RegionName": "Your hook here"
+  }
+}`;
+
+        const gpt = require('./services/gptService');
+        const response = await gpt.simplePrompt('gpt-5-mini',
+            'You write compelling adventure hooks for RPG worlds. Be concise and evocative.',
+            hookPrompt
+        );
+        const parsed = JSON.parse(response.content);
+        res.json(parsed.hooks || {});
+    } catch (error) {
+        console.error('[RegionHooks] Error:', error);
+        res.json({});
     }
 });
 
@@ -453,33 +535,43 @@ app.post('/api/input/stream', ensureAuthenticated, async (req, res) => {
         const { input, inputType, plotId } = req.body;
         const cookies = req.headers.cookie;
 
-        if (!cookies) {
-            return res.status(401).send('Cookies are missing');
-        }
-
         // Set headers for SSE
         res.setHeader('Content-Type', 'text/event-stream');
         res.setHeader('Cache-Control', 'no-cache');
         res.setHeader('Connection', 'keep-alive');
         res.flushHeaders();
 
-        // Use the streaming interpreter
-        const stream = await actionInterpreter.interpretStream(input, inputType, plotId, cookies);
-        
-        for await (const chunk of stream) {
-            // Check if chunk is a map update object or text chunk
-            if (typeof chunk === 'object' && chunk.mapUpdate) {
-                // Send map data as separate event
-                res.write(`data: ${JSON.stringify({ mapUpdate: chunk.mapUpdate })}\n\n`);
-            } else {
-                // Send text chunk normally
+        if (inputType === 'askGM') {
+            // Ask GM uses the old simple path — no tools needed
+            const stream = actionInterpreter.interpretStream(input, 'askGM', plotId, cookies);
+            for await (const chunk of stream) {
                 res.write(`data: ${JSON.stringify({ chunk })}\n\n`);
             }
+        } else {
+            // All player input (action + speech unified) goes through the game agent
+            const stream = gameAgent.processInput(input, plotId, cookies);
+            for await (const event of stream) {
+                switch (event.type) {
+                    case 'tool_call':
+                        res.write(`data: ${JSON.stringify({ tool_call: event.display })}\n\n`);
+                        break;
+                    case 'chunk':
+                        res.write(`data: ${JSON.stringify({ chunk: event.content })}\n\n`);
+                        break;
+                    case 'suggested_actions':
+                        res.write(`data: ${JSON.stringify({ suggested_actions: event.actions })}\n\n`);
+                        break;
+                    case 'done':
+                        // handled below
+                        break;
+                }
+            }
         }
-        
+
         res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
         res.end();
     } catch (error) {
+        console.error('[Stream] Error:', error.message);
         res.write(`data: ${JSON.stringify({ error: error.message })}\n\n`);
         res.end();
     }
@@ -508,60 +600,61 @@ app.get('/api/plots/:plotId', ensureAuthenticated, async (req, res) => {
     }
 });
 
-// Create or fetch plot for a given world
-// Assign initial region and settlement when creating a new plot
+// Create plot for a given world — instant, no GPT calls
+// Initialization (GPT calls) happens later via POST /api/plot/:plotId/initialize
 app.post('/api/plot', ensureAuthenticated, async (req, res) => {
     try {
-        const { worldId } = req.body;
+        const { worldId, regionId } = req.body;
         if (!mongoose.Types.ObjectId.isValid(worldId)) {
             return res.status(400).send('Invalid worldId format');
         }
 
-        const regions = await Region.find({ world: worldId });
-        if (!regions.length) {
-            return res.status(404).send('No regions found in this world');
-        }
-        const initialRegion = regions[Math.floor(Math.random() * regions.length)];
-        const initialSettlement = initialRegion.settlements.length ? initialRegion.settlements[Math.floor(Math.random() * initialRegion.settlements.length)] : null;
-
-        // OPTIMIZATION: Lazy-load descriptions on first use instead of upfront
-        // await describeRegionAndSettlements(initialRegion._id);
-
-        let locationName, locationDescription, coordinates, settlement = null;
-
-        if (initialSettlement) {
-            settlement = await Settlement.findById(initialSettlement);
-            locationName = settlement.name || 'Starting Settlement';
-            locationDescription = settlement.description || 'A place to begin your journey.';
-            const randomIndex = Math.floor(Math.random() * settlement.coordinates.length);
-            coordinates = settlement.coordinates[randomIndex];
+        let initialRegion;
+        if (regionId && mongoose.Types.ObjectId.isValid(regionId)) {
+            initialRegion = await Region.findById(regionId);
+            if (!initialRegion || initialRegion.world.toString() !== worldId) {
+                return res.status(400).send('Region not found in this world');
+            }
         } else {
-            locationName = initialRegion.name || 'Starting Region';
-            locationDescription = initialRegion.description || 'An unexplored land awaits.';
-            // Fixed: was "region.coordinates", should be "initialRegion.coordinates"
-            const randomIndex = Math.floor(Math.random() * initialRegion.coordinates.length);
-            coordinates = initialRegion.coordinates[randomIndex];
+            // Backward compat: pick random region
+            const regions = await Region.find({ world: worldId });
+            if (!regions.length) {
+                return res.status(404).send('No regions found in this world');
+            }
+            initialRegion = regions[Math.floor(Math.random() * regions.length)];
         }
-        
-        // Ensure coordinates are valid
-        if (!coordinates || coordinates.length < 2) {
-            coordinates = [0, 0];
+
+        const initialSettlement = initialRegion.settlements.length
+            ? initialRegion.settlements[Math.floor(Math.random() * initialRegion.settlements.length)]
+            : null;
+
+        // Use placeholder coordinates
+        let coordinates = [0, 0];
+        if (initialSettlement) {
+            const settlement = await Settlement.findById(initialSettlement);
+            if (settlement && settlement.coordinates && settlement.coordinates.length > 0) {
+                const randomIndex = Math.floor(Math.random() * settlement.coordinates.length);
+                coordinates = settlement.coordinates[randomIndex] || [0, 0];
+            }
+        } else if (initialRegion.coordinates && initialRegion.coordinates.length >= 2) {
+            coordinates = initialRegion.coordinates;
         }
 
         const plot = new Plot({
             world: worldId,
+            status: 'created',
             quests: [],
             milestones: [],
             current_state: {
                 current_activity: 'exploring',
                 current_location: {
                     region: initialRegion._id,
-                    settlement: initialSettlement ? initialSettlement._id : null,
-                    locationId: null, // Will be set after locations are generated
+                    settlement: initialSettlement ? (initialSettlement._id || initialSettlement) : null,
+                    locationId: null,
                     coordinates: coordinates,
-                    locationName: locationName,
-                    locationDescription: locationDescription,
-                    description: locationDescription,
+                    locationName: initialRegion.name || 'Unknown',
+                    locationDescription: initialRegion.short || 'An unexplored land awaits.',
+                    description: initialRegion.short || 'An unexplored land awaits.',
                     map_data: {
                         semantic_coordinates: { x: coordinates[0], y: coordinates[1], z: 0 },
                         connections: [],
@@ -579,33 +672,164 @@ app.post('/api/plot', ensureAuthenticated, async (req, res) => {
         });
 
         await plot.save();
-        
-        // Sync locationId if settlement has locations
-        if (initialSettlement) {
-            await movementService.syncLocationId(plot._id);
-        }
-        
-        // Reload plot to get synced location
-        const updatedPlot = await Plot.findById(plot._id);
-        const finalLocationName = updatedPlot.current_state.current_location.locationName || locationName;
-        
-        // Create initial game log entry with opening narrative
-        const GameLog = require('./db/models/GameLog');
-        const openingMessage = `You arrive at ${finalLocationName} in ${settlement?.name || initialRegion.name}.\n\n${locationDescription}\n\nThe world stretches before you—alive, indifferent, and full of possibility. What will you do?`;
-        
-        const gameLog = new GameLog({
-            plotId: plot._id,
-            messages: [{
-                author: 'AI',
-                content: openingMessage,
-                timestamp: new Date()
-            }]
-        });
-        await gameLog.save();
-        
         res.json(plot);
     } catch (error) {
+        console.error('[Plot] Error creating plot:', error);
         res.status(500).send(error.message);
+    }
+});
+
+// Initialize a newly created plot — SSE endpoint with progress events
+// Performs all the GPT-heavy work: describe region, generate locations, opening narrative
+app.post('/api/plot/:plotId/initialize', ensureAuthenticated, async (req, res) => {
+    try {
+        const { plotId } = req.params;
+        if (!mongoose.Types.ObjectId.isValid(plotId)) {
+            return res.status(400).json({ error: 'Invalid plotId format' });
+        }
+
+        const plot = await Plot.findById(plotId);
+        if (!plot) {
+            return res.status(404).json({ error: 'Plot not found' });
+        }
+
+        // Guard: already ready
+        if (plot.status === 'ready' || plot.status === undefined) {
+            return res.json({ status: 'ready', message: 'Plot already initialized' });
+        }
+
+        // Guard: already initializing — but allow retry if stuck for >2 minutes
+        if (plot.status === 'initializing') {
+            const updatedAt = plot.updatedAt || plot._id.getTimestamp();
+            const stuckMs = Date.now() - new Date(updatedAt).getTime();
+            if (stuckMs < 120000) {
+                return res.json({ status: 'initializing', message: 'Plot initialization already in progress' });
+            }
+            // Stuck for >2 min — treat as failed, allow re-init
+            console.warn(`[Init] Plot ${plot._id} stuck at 'initializing' for ${Math.round(stuckMs/1000)}s, resetting`);
+        }
+
+        // Begin SSE stream for 'created' or 'error' status
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('Connection', 'keep-alive');
+        res.flushHeaders();
+
+        const sendEvent = (type, data) => {
+            res.write(`data: ${JSON.stringify({ type, ...data })}\n\n`);
+        };
+
+        // Mark as initializing
+        plot.status = 'initializing';
+        await plot.save();
+
+        try {
+            const regionId = plot.current_state.current_location.region;
+            const settlementRef = plot.current_state.current_location.settlement;
+
+            // Step 1: Describe region + starting settlement in parallel (not ALL settlements)
+            sendEvent('progress', { step: 1, total: 3, message: 'Describing the region...' });
+
+            const region = await Region.findById(regionId);
+            const needsRegionDescribe = !region.described;
+            const settlementDoc = settlementRef ? await Settlement.findById(settlementRef) : null;
+            const needsSettlementDescribe = settlementDoc && !settlementDoc.described;
+
+            // Run region describe + settlement describe in parallel
+            const parallelTasks = [];
+            if (needsRegionDescribe) {
+                parallelTasks.push(regionFactory.describe(regionId));
+            }
+            if (needsSettlementDescribe) {
+                parallelTasks.push(settlementsFactory.describe([settlementRef._id || settlementRef]));
+            }
+            if (parallelTasks.length > 0) {
+                await Promise.all(parallelTasks);
+            }
+
+            // Step 2: Generate locations in the starting settlement
+            sendEvent('progress', { step: 2, total: 3, message: 'Generating locations...' });
+            let startingLocationName = null;
+            let settlement = null;
+            if (settlementRef) {
+                startingLocationName = await settlementsFactory.ensureLocations(settlementRef);
+                settlement = await Settlement.findById(settlementRef);
+            }
+
+            // Step 3: Update plot with real names/coordinates, create game log
+            sendEvent('progress', { step: 3, total: 3, message: 'Preparing your starting position...' });
+            const freshRegion = await Region.findById(regionId);
+
+            if (settlement) {
+                plot.current_state.current_location.locationName = startingLocationName || settlement.name || 'Starting Settlement';
+                plot.current_state.current_location.locationDescription = settlement.description || 'A place to begin your journey.';
+                plot.current_state.current_location.description = settlement.description || 'A place to begin your journey.';
+                if (settlement.coordinates && settlement.coordinates.length > 0) {
+                    const idx = Math.floor(Math.random() * settlement.coordinates.length);
+                    const coords = settlement.coordinates[idx] || [0, 0];
+                    plot.current_state.current_location.coordinates = coords;
+                    plot.current_state.current_location.map_data.semantic_coordinates = { x: coords[0], y: coords[1], z: 0 };
+                }
+            } else if (freshRegion) {
+                plot.current_state.current_location.locationName = freshRegion.name || 'Starting Region';
+                plot.current_state.current_location.locationDescription = freshRegion.description || 'An unexplored land awaits.';
+                plot.current_state.current_location.description = freshRegion.description || 'An unexplored land awaits.';
+            }
+            await plot.save();
+
+            // Sync locationId if settlement has locations
+            if (settlementRef) {
+                await movementService.syncLocationId(plot._id);
+            }
+
+            // Reload plot to get synced data
+            const updatedPlot = await Plot.findById(plot._id);
+            const finalLocationName = updatedPlot.current_state.current_location.locationName;
+            const locationDesc = updatedPlot.current_state.current_location.locationDescription;
+            const settlementName = settlement ? settlement.name : (freshRegion ? freshRegion.name : 'the wilds');
+
+            // Create opening narrative and game log
+
+            const openingMessage = `You arrive at ${finalLocationName} in ${settlementName}.\n\n${locationDesc}\n\nThe world stretches before you—alive, indifferent, and full of possibility. What will you do?`;
+
+            const gameLog = new GameLog({
+                plotId: plot._id,
+                messages: [{
+                    author: 'AI',
+                    content: openingMessage,
+                    timestamp: new Date()
+                }]
+            });
+            await gameLog.save();
+
+            updatedPlot.gameLogs.push(gameLog._id);
+            updatedPlot.status = 'ready';
+            await updatedPlot.save();
+
+            sendEvent('complete', { message: 'Your adventure is ready!', locationName: finalLocationName });
+            res.end();
+
+            // Fire-and-forget background tasks — don't block the player
+            // 1. Describe remaining settlements in the region
+            regionFactory.describeSettlements(regionId).catch(err => {
+                console.error('[Init] Background settlement description failed:', err.message);
+            });
+            // 2. Generate initial quests
+            getInitialQuests(plot._id).catch(err => {
+                console.error('[Init] Background quest generation failed:', err.message);
+            });
+
+        } catch (initError) {
+            console.error('[Init] Error during initialization:', initError);
+            plot.status = 'error';
+            await plot.save();
+            sendEvent('error', { message: 'Initialization failed. You can retry.' });
+            res.end();
+        }
+
+    } catch (error) {
+        console.error('[Init] Error:', error);
+        res.status(500).json({ error: error.message });
     }
 });
 
@@ -1337,14 +1561,22 @@ if (NODE_ENV === 'production') {
         console.log(`Server is running in production mode on port ${PORT}`);
     });
 } else {
-    // Development mode: use self-signed certificates for HTTPS on localhost
-    const httpsOptions = {
-        key: fs.readFileSync('localhost-key.pem'),
-        cert: fs.readFileSync('localhost.pem')
-    };
+    // Development mode: use HTTPS if certs exist, otherwise fall back to HTTP
+    const keyPath = path.join(__dirname, 'localhost-key.pem');
+    const certPath = path.join(__dirname, 'localhost.pem');
 
-    https.createServer(httpsOptions, app).listen(PORT, () => {
-        console.log(`Server is running in development mode on https://localhost:${PORT}`);
-    });
+    if (fs.existsSync(keyPath) && fs.existsSync(certPath)) {
+        const httpsOptions = {
+            key: fs.readFileSync(keyPath),
+            cert: fs.readFileSync(certPath)
+        };
+        https.createServer(httpsOptions, app).listen(PORT, () => {
+            console.log(`Server is running in development mode on https://localhost:${PORT}`);
+        });
+    } else {
+        http.createServer(app).listen(PORT, () => {
+            console.log(`Server is running in development mode on http://localhost:${PORT} (no SSL certs found)`);
+        });
+    }
 }
 

@@ -94,7 +94,8 @@ const Settlement = new Schema(
         image: String,
         // NEW: Internal locations within the settlement
         locations: [LocationSchema],
-        locationsGenerated: { type: Boolean, default: false }
+        locationsGenerated: { type: Boolean, default: false },
+        layoutComputed: { type: Boolean, default: false }
     }
 );
 
