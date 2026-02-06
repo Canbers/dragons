@@ -78,7 +78,7 @@ const Plot = new Schema(
                         name: String,
                         direction: {
                             type: String,
-                            enum: ['north', 'south', 'east', 'west', 'northeast', 'northwest', 'southeast', 'southwest', 'up', 'down']
+                            enum: ['north', 'south', 'east', 'west', 'northeast', 'northwest', 'southeast', 'southwest', 'up', 'down', 'inside', 'outside']
                         },
                         distance: {
                             type: String,

@@ -1,11 +1,7 @@
-const mongoose = require('mongoose');
-const Ecosystem = require('../../db/models/Ecosystem');
 const Region = require('../../db/models/Region');
 const Settlement = require('../../db/models/Settlement');
 const Plot = require('../../db/models/Plot');
 const Quest = require('../../db/models/Quest');
-const gpt = require('../../services/gptService');
-const { uuid } = require('uuidv4');
 
 // Function to save one or multiple quests to the Quest collection
 const saveQuests = async (quests, region, originSettlement, plotId) => {
@@ -90,4 +86,4 @@ const questsToPlot = async (quests, plotId) => {
     }
 };
 
-module.exports = { saveQuests, questsToPlot };
+module.exports = { saveQuests };

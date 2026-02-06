@@ -11,12 +11,7 @@
 const Plot = require('../db/models/Plot');
 const Settlement = require('../db/models/Settlement');
 const GameLog = require('../db/models/GameLog');
-const { OpenAI } = require('openai');
-const { buildSystemPrompt, GAME_MODEL } = require('./gptService');
-
-require('dotenv').config();
-
-const openai = new OpenAI({ project: process.env.DRAGONS_PROJECT });
+const { openai, buildSystemPrompt, GAME_MODEL } = require('./gptService');
 
 // ============ TOOL DEFINITIONS ============
 
@@ -315,7 +310,7 @@ async function getRecentMessages(plotId, limit = 10) {
  * Process player input through the agent pipeline.
  * Yields events: { type: 'tool_call' | 'chunk' | 'done', ... }
  */
-async function* processInput(input, plotId, cookies) {
+async function* processInput(input, plotId) {
     const startTime = Date.now();
 
     // Load plot

@@ -227,21 +227,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         console.error('MapViewer class not loaded');
     }
 
-    async function fetchWorldDetails(worldId) {
-        try {
-            const response = await fetch(`/api/worlds/${worldId}`);
-            if (response.status === 401) {
-                window.location.href = '/authorize';
-                return;
-            }
-            if (!response.ok) {
-                throw new Error('Failed to fetch world details');
-            }
-            const world = await response.json();
-        } catch (error) {
-            console.error('Error fetching world details:', error);
-        }
-    }
 
     async function fetchRegionDetails(regionId) {
         try {
@@ -559,7 +544,6 @@ async function fetchGameInfo(plotId, characterId) {
         displayGameInfo(plot, character);
 
         if (plot.world && plot.world._id) {
-            fetchWorldDetails(plot.world._id);  // Fetch world details using the world ID from the plot
             if (plot.current_state.current_location.region) {
                 const regionId = plot.current_state.current_location.region._id || plot.current_state.current_location.region;  // Extract the region ID
                 currentRegionId = regionId; // Store for resize handler
