@@ -11,6 +11,7 @@ const Plot = require('../db/models/Plot');
 const Settlement = require('../db/models/Settlement');
 const settlementsFactory = require('../agents/world/factories/settlementsFactory');
 const { simplePrompt } = require('./gptService');
+const { sanitizeDirection } = require('./layoutService');
 
 /**
  * Parse an AI response for discoveries (NPCs, objects, locations)
@@ -153,7 +154,7 @@ IMPORTANT: Only include things with PROPER NAMES. Skip generic descriptions like
                         location.connections = location.connections || [];
                         location.connections.push({
                             locationName: newLoc.name,
-                            direction: newLoc.direction || 'nearby',
+                            direction: sanitizeDirection(newLoc.direction),
                             description: newLoc.description || ''
                         });
                         

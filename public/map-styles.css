@@ -50,7 +50,7 @@
   padding: 20px;
   overflow-y: auto;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
 }
 
@@ -161,18 +161,113 @@
   font-size: 12px;
 }
 
-.map-graph {
-  max-width: 100%;
+/* Settlement SVG Map */
+.settlement-map-container {
+  width: 100%;
+  max-width: 380px;
+  margin: 0 auto;
+}
+
+.settlement-map {
+  width: 100%;
   height: auto;
+  display: block;
 }
 
-.location-node {
-  transition: all 0.3s;
+.map-bg {
+  fill: #0d1117;
+  stroke: #1a2e3e;
+  stroke-width: 2;
 }
 
-.location-node:not(.current):hover {
+/* Roads */
+.road {
+  stroke: #8B7355;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+.road.fog-road {
+  stroke: #8B7355;
+  stroke-width: 1.5;
+  stroke-dasharray: 6 4;
+  opacity: 0.35;
+}
+
+/* Fog nodes (undiscovered) */
+.fog-circle {
+  fill: #1a1a2e;
+  stroke: #444;
+  stroke-width: 1.5;
+  stroke-dasharray: 3 3;
+  opacity: 0.5;
+}
+
+.fog-label {
+  fill: #666;
+  font-size: 14px;
+  font-weight: bold;
+  text-anchor: middle;
+  pointer-events: none;
+}
+
+/* Location markers */
+.location-marker {
+  cursor: pointer;
+}
+
+.location-marker:hover .marker {
   filter: brightness(1.3);
-  transform: scale(1.1);
+}
+
+.location-marker:hover .marker-label {
+  fill: #fff;
+}
+
+.marker {
+  stroke: #222;
+  stroke-width: 2;
+  transition: filter 0.2s;
+}
+
+.marker.current {
+  stroke: #4CAF50;
+  stroke-width: 2.5;
+}
+
+.marker.connected {
+  stroke: #6366f1;
+  stroke-width: 2;
+}
+
+/* Current location glow */
+.current-glow {
+  fill: none;
+  stroke: #4CAF50;
+  stroke-width: 2;
+  opacity: 0.6;
+  animation: glow-pulse 2s ease-in-out infinite;
+}
+
+@keyframes glow-pulse {
+  0%, 100% { opacity: 0.3; r: 20; }
+  50% { opacity: 0.7; r: 24; }
+}
+
+/* Marker icon (emoji) */
+.marker-icon {
+  font-size: 14px;
+  text-anchor: middle;
+  pointer-events: none;
+}
+
+/* Marker label (name) */
+.marker-label {
+  fill: #aaa;
+  font-size: 10px;
+  text-anchor: middle;
+  pointer-events: none;
+  font-family: inherit;
 }
 
 /* Scene View (POI List) */
@@ -375,8 +470,8 @@
     border-top: 2px solid #0f3460;
   }
 
-  .map-graph {
-    width: 100%;
+  .settlement-map-container {
+    max-width: 100%;
   }
 
   .poi-card {

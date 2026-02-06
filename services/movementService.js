@@ -7,6 +7,7 @@
 
 const Plot = require('../db/models/Plot');
 const Settlement = require('../db/models/Settlement');
+const { computeLayout } = require('./layoutService');
 
 /**
  * Get the player's current location with full details
@@ -33,7 +34,21 @@ async function getCurrentLocation(plotId) {
             pois: []
         };
     }
-    
+
+    // Lazy migration: compute layout for old settlements that don't have it
+    if (!settlement.layoutComputed && settlement.locations?.length > 0) {
+        const positions = computeLayout(settlement.locations);
+        for (const loc of settlement.locations) {
+            const pos = positions.get(loc.name.toLowerCase());
+            if (pos) {
+                loc.coordinates = { x: pos.x, y: pos.y };
+            }
+        }
+        settlement.layoutComputed = true;
+        await settlement.save();
+        console.log(`[Layout] Migrated layout for settlement: ${settlement.name}`);
+    }
+
     // Find current location by locationId (preferred) or locationName (fallback)
     let currentLocation = null;
     const locationId = plot.current_state.current_location.locationId;
@@ -69,7 +84,8 @@ async function getCurrentLocation(plotId) {
             description: conn.description,
             distance: conn.distance,
             targetId: targetLoc?._id || null,
-            discovered: targetLoc?.discovered || false
+            discovered: targetLoc?.discovered || false,
+            type: targetLoc?.type || null
         };
     });
     
@@ -103,7 +119,7 @@ async function getCurrentLocation(plotId) {
         } : null,
         connections: validMoves,
         pois: pois,
-        // Include all discovered locations for map rendering
+        // Include all discovered locations for map rendering (with connection graph)
         discoveredLocations: (settlement.locations || [])
             .filter(l => l.discovered)
             .map(l => ({
@@ -112,7 +128,21 @@ async function getCurrentLocation(plotId) {
                 type: l.type,
                 shortDescription: l.shortDescription,
                 coordinates: l.coordinates,
-                isCurrent: currentLocation && l._id.toString() === currentLocation._id.toString()
+                isCurrent: currentLocation && l._id.toString() === currentLocation._id.toString(),
+                connections: (l.connections || []).map(conn => {
+                    const targetLoc = settlement.locations.find(t =>
+                        t.name.toLowerCase() === conn.locationName?.toLowerCase()
+                    );
+                    return {
+                        locationName: conn.locationName,
+                        direction: conn.direction,
+                        distance: conn.distance,
+                        targetId: targetLoc?._id || null,
+                        targetDiscovered: targetLoc?.discovered || false,
+                        targetCoordinates: targetLoc?.coordinates || null,
+                        targetType: targetLoc?.type || null
+                    };
+                })
             }))
     };
 }

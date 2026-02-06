@@ -225,23 +225,8 @@ document.addEventListener('DOMContentLoaded', () => {
     
     document.getElementById('generate-new-plot').addEventListener('click', async () => {
         const worldId = document.getElementById('world-select').value;
-        showSpinner();
-        try {
-            const response = await fetch('/api/plot', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ worldId })
-            });
-            const plot = await response.json();
-            hideSpinner();
-            document.getElementById('new-plot-modal').style.display = 'none';
-            openCharacterCreatorModal(plot._id);
-        } catch (error) {
-            hideSpinner();
-            console.error('Error creating plot:', error);
-        }
+        document.getElementById('new-plot-modal').style.display = 'none';
+        openRegionSelectionModal(worldId);
     });
     
     // New world
@@ -261,27 +246,121 @@ document.addEventListener('DOMContentLoaded', () => {
                 body: JSON.stringify({ worldName })
             });
             const newWorld = await worldResponse.json();
-            const plotResponse = await fetch('/api/plot', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ worldId: newWorld._id })
-            });
-            const plot = await plotResponse.json();
             hideSpinner();
             document.getElementById('new-world-modal').style.display = 'none';
-            openCharacterCreatorModal(plot._id);
+            openRegionSelectionModal(newWorld._id);
         } catch (error) {
             hideSpinner();
-            console.error('Error generating new world and plot:', error);
+            console.error('Error generating new world:', error);
         }
     });
     
+    // Region Selection
+    async function openRegionSelectionModal(worldId) {
+        const modal = document.getElementById('region-selection-modal');
+        const cardsContainer = document.getElementById('region-cards');
+        const loading = document.getElementById('region-cards-loading');
+
+        modal.style.display = 'block';
+        cardsContainer.innerHTML = '';
+        loading.style.display = 'flex';
+
+        // Ecosystem color mapping
+        const ecosystemColors = {
+            'forest': '#2E8B57',
+            'desert': '#D2691E',
+            'mountain': '#708090',
+            'plains': '#6B8E23',
+            'grassland': '#6B8E23',
+            'tundra': '#B0C4DE',
+            'swamp': '#556B2F',
+            'marsh': '#556B2F',
+            'coastal': '#4682B4',
+            'volcanic': '#8B0000',
+            'jungle': '#228B22',
+            'arctic': '#E0FFFF'
+        };
+
+        try {
+            // Fetch regions instantly from DB (no GPT)
+            const response = await fetch(`/api/worlds/${worldId}/region-selection`);
+            if (!response.ok) {
+                throw new Error('Failed to load regions');
+            }
+            const regions = await response.json();
+            loading.style.display = 'none';
+
+            // Render cards immediately with region descriptions
+            regions.forEach(region => {
+                const ecoLower = (region.ecosystem?.name || '').toLowerCase();
+                const borderColor = Object.entries(ecosystemColors).find(([key]) => ecoLower.includes(key))?.[1] || '#6366f1';
+
+                const card = document.createElement('div');
+                card.className = 'region-card';
+                card.dataset.regionName = region.name;
+                card.style.borderLeftColor = borderColor;
+                card.innerHTML = `
+                    <div class="region-card-header">
+                        <h4>${region.name}</h4>
+                        <span class="region-ecosystem">${region.ecosystem?.name || 'Unknown'}</span>
+                    </div>
+                    <p class="region-short">${region.short}</p>
+                    <p class="region-hook" data-region="${region.name}"><em class="hook-loading">Uncovering adventure hooks...</em></p>
+                `;
+                card.addEventListener('click', async () => {
+                    modal.style.display = 'none';
+                    showSpinner();
+                    try {
+                        const plotResponse = await fetch('/api/plot', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ worldId, regionId: region._id })
+                        });
+                        const plot = await plotResponse.json();
+                        hideSpinner();
+                        openCharacterCreatorModal(plot._id);
+                    } catch (err) {
+                        hideSpinner();
+                        console.error('Error creating plot:', err);
+                    }
+                });
+                cardsContainer.appendChild(card);
+            });
+
+            // Fetch hooks async in background, fill in when ready
+            fetch(`/api/worlds/${worldId}/region-hooks`)
+                .then(r => r.json())
+                .then(hooks => {
+                    Object.entries(hooks).forEach(([name, hook]) => {
+                        const hookEl = cardsContainer.querySelector(`.region-hook[data-region="${name}"]`);
+                        if (hookEl) {
+                            hookEl.innerHTML = `<em>"${hook}"</em>`;
+                        }
+                    });
+                })
+                .catch(err => {
+                    // Hooks failed — remove loading text, show nothing
+                    cardsContainer.querySelectorAll('.hook-loading').forEach(el => {
+                        el.parentElement.style.display = 'none';
+                    });
+                });
+        } catch (error) {
+            loading.style.display = 'none';
+            cardsContainer.innerHTML = '<p style="color: #ef4444;">Failed to load regions. Please try again.</p>';
+            console.error('Error loading regions:', error);
+        }
+    }
+
     // Character Creator
     function openCharacterCreatorModal(plotId) {
         document.getElementById('character-creator-modal').style.display = 'block';
-        document.getElementById('confirm-character').addEventListener('click', async () => {
+
+        // Clone and replace the button to remove old event listeners
+        const oldBtn = document.getElementById('confirm-character');
+        const newBtn = oldBtn.cloneNode(true);
+        oldBtn.parentNode.replaceChild(newBtn, oldBtn);
+
+        newBtn.addEventListener('click', async () => {
             const characterData = {
                 name: document.getElementById('char-name').value,
                 age: parseInt(document.getElementById('char-age').value, 10),
@@ -299,15 +378,25 @@ document.addEventListener('DOMContentLoaded', () => {
                     },
                     body: JSON.stringify(characterData)
                 });
-    
+
                 if (!response.ok) {
                     throw new Error('Failed to create character');
                 }
-    
+
                 const newCharacter = await response.json();
+
+                // Assign character to the plot
+                await fetch('/api/assign-character', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ characterId: newCharacter._id, plotId })
+                });
+
                 hideSpinner();
                 document.getElementById('character-creator-modal').style.display = 'none';
-                fetchCharacters(); // Refresh the character list
+
+                // Auto-redirect to game page
+                window.location.href = `/index.html?plotId=${plotId}&characterId=${newCharacter._id}`;
             } catch (error) {
                 hideSpinner();
                 console.error('Error creating character:', error);

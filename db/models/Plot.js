@@ -8,6 +8,11 @@ const Plot = new Schema(
             ref: 'World',
             required: true
         },
+        status: {
+            type: String,
+            enum: ['created', 'initializing', 'ready', 'error'],
+            default: 'created'
+        },
         players: [
             {
                 user: {
@@ -204,7 +209,8 @@ const Plot = new Schema(
             causedBy: String, // What action caused this
             timestamp: { type: Date, default: Date.now }
         }]
-    }
+    },
+    { timestamps: true }
 );
 
 module.exports = mongoose.model('Plot', Plot);

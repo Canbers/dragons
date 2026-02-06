@@ -1,6 +1,7 @@
 const Settlement = require('../../../db/models/Settlement');
 const { uuid } = require('uuidv4');
 const gpt = require('../../../services/gptService');
+const layoutService = require('../../../services/layoutService');
 
 const buffer = 5;
 
@@ -213,10 +214,16 @@ const generateLocations = async (settlementId) => {
 Settlement info: ${settlement.short || settlement.description?.substring(0, 200) || 'A settlement'}
 
 Requirements:
-- Include one entry point (gate/docks/road)
+- Include one entry point (gate/docks/road) marked isStartingLocation: true
 - Include one tavern or market
 - Each location needs a name, type, and brief description
-- Add connections between locations
+- Add connections between locations with VARIED compass directions
+- Connections should form a natural settlement layout, NOT a straight line
+- Use a mix of: north, south, east, west, northeast, northwest, southeast, southwest
+- Most locations should connect to 2-3 others, creating a web not a chain
+- Connections are bidirectional: if A connects east to B, B should connect west to A
+- IMPORTANT: direction MUST be exactly one of these values (no variations, no hyphens, no extra words):
+  north, south, east, west, northeast, northwest, southeast, southwest, up, down, inside, outside
 
 Respond with a JSON object containing a "locations" array:
 
@@ -225,22 +232,30 @@ Respond with a JSON object containing a "locations" array:
     {
       "name": "The Cinder Gate",
       "type": "gate",
-      "shortDescription": "Main entrance",
-      "description": "The main gate into town.",
-      "connections": [{"locationName": "Market Square", "direction": "west"}],
+      "shortDescription": "Main entrance, heavy oak doors",
+      "description": "The main gate into town, flanked by weathered stone towers.",
+      "connections": [
+        {"locationName": "Market Square", "direction": "northwest", "distance": "adjacent"},
+        {"locationName": "Guard Barracks", "direction": "west", "distance": "adjacent"}
+      ],
       "isStartingLocation": true
     },
     {
-      "name": "Market Square", 
+      "name": "Market Square",
       "type": "market",
-      "shortDescription": "Trading hub",
-      "description": "The central marketplace.",
-      "connections": [{"locationName": "The Cinder Gate", "direction": "east"}]
+      "shortDescription": "Bustling trading hub",
+      "description": "A wide cobblestone plaza ringed with merchant stalls.",
+      "connections": [
+        {"locationName": "The Cinder Gate", "direction": "southeast", "distance": "adjacent"},
+        {"locationName": "The Rusty Flagon", "direction": "north", "distance": "adjacent"},
+        {"locationName": "Temple of the Dawn", "direction": "west", "distance": "close"}
+      ]
     }
   ]
 }
 
-Types: gate, market, tavern, temple, plaza, shop, landmark, docks, barracks, other`;
+Types: gate, market, tavern, temple, plaza, shop, residence, landmark, dungeon, district, docks, barracks, palace, other
+Distances: adjacent (nearby), close (short walk), far (across settlement)`;
 
     let retries = 5;
     while (retries > 0) {
@@ -292,7 +307,7 @@ Types: gate, market, tavern, temple, plaza, shop, landmark, docks, barracks, oth
                 },
                 connections: (loc.connections || []).map(conn => ({
                     locationName: conn.locationName,
-                    direction: conn.direction || 'nearby',
+                    direction: layoutService.sanitizeDirection(conn.direction),
                     description: conn.description || '',
                     distance: conn.distance || 'adjacent'
                 })),
@@ -309,10 +324,20 @@ Types: gate, market, tavern, temple, plaza, shop, landmark, docks, barracks, oth
                 gateOrFirst.isStartingLocation = true;
                 gateOrFirst.discovered = true;
             }
-            
+
+            // Compute spatial layout from connection graph
+            const layoutPositions = layoutService.computeLayout(processedLocations);
+            for (const loc of processedLocations) {
+                const pos = layoutPositions.get(loc.name.toLowerCase());
+                if (pos) {
+                    loc.coordinates = { x: pos.x, y: pos.y };
+                }
+            }
+
             // Save to settlement
             settlement.locations = processedLocations;
             settlement.locationsGenerated = true;
+            settlement.layoutComputed = true;
             await settlement.save();
             
             console.log(`[Locations] ✓ Generated ${processedLocations.length} locations for ${settlement.name}`);
@@ -405,14 +430,17 @@ const addLocation = async (settlementId, locationData) => {
         return existing;
     }
     
+    // Compute position from connection graph instead of grid index
+    const computedPos = layoutService.computeSingleNodePosition(settlement.locations, locationData);
+
     const newLocation = {
         name: locationData.name,
         type: locationData.type || 'other',
         description: locationData.description || '',
         shortDescription: locationData.shortDescription || '',
         coordinates: {
-            x: settlement.locations.length % 4,
-            y: Math.floor(settlement.locations.length / 4)
+            x: computedPos.x,
+            y: computedPos.y
         },
         connections: locationData.connections || [],
         pois: [],
