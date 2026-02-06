@@ -507,28 +507,10 @@ app.get('/api/quest-details', ensureAuthenticated, async (req, res) => {
     }
 });
 
-// Interpret User Input (non-streaming)
-app.post('/api/input', ensureAuthenticated, async (req, res) => {
-    try {
-        const { input, inputType, plotId } = req.body;
-        const cookies = req.headers.cookie; // Extract cookies from the request headers
-
-        if (!cookies) {
-            return res.status(401).send('Cookies are missing');
-        }
-
-        const response = await actionInterpreter.interpret(input, inputType, plotId, cookies);
-        res.json(response);
-    } catch (error) {
-        res.status(500).send(error.message);
-    }
-});
-
 // Streaming endpoint for real-time AI responses
 app.post('/api/input/stream', ensureAuthenticated, async (req, res) => {
     try {
         const { input, inputType, plotId } = req.body;
-        const cookies = req.headers.cookie;
 
         // Set headers for SSE
         res.setHeader('Content-Type', 'text/event-stream');
@@ -538,13 +520,13 @@ app.post('/api/input/stream', ensureAuthenticated, async (req, res) => {
 
         if (inputType === 'askGM') {
             // Ask GM uses the old simple path — no tools needed
-            const stream = actionInterpreter.interpretStream(input, 'askGM', plotId, cookies);
+            const stream = actionInterpreter.interpretStream(input, 'askGM', plotId);
             for await (const chunk of stream) {
                 res.write(`data: ${JSON.stringify({ chunk })}\n\n`);
             }
         } else {
             // All player input (action + speech unified) goes through the game agent
-            const stream = gameAgent.processInput(input, plotId, cookies);
+            const stream = gameAgent.processInput(input, plotId);
             for await (const event of stream) {
                 switch (event.type) {
                     case 'tool_call':

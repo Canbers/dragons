@@ -1,5 +1,5 @@
-const fetch = require('node-fetch');
 const Plot = require('../db/models/Plot');
+const GameLog = require('../db/models/GameLog');
 const Region = require('../db/models/Region');
 const Settlement = require('../db/models/Settlement');
 const regionFactory = require('../agents/world/factories/regionsFactory');
@@ -7,12 +7,6 @@ const settlementsFactory = require('../agents/world/factories/settlementsFactory
 const { prompt, simplePrompt, streamPrompt, GAME_MODEL } = require('../services/gptService');
 const movementService = require('../services/movementService');
 const discoveryService = require('../services/discoveryService');
-
-// Load environment variables
-require('dotenv').config();
-
-// Use HTTP for local development
-const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:3000';
 
 /**
  * Get context about what time of day means for the world
@@ -39,28 +33,27 @@ const getTimeContext = (timeOfDay) => {
     return contexts['day'];
 };
 
-const getRecentMessages = async (plotId, limit = 20, cookies) => {
+const getRecentMessages = async (plotId, limit = 20) => {
     if (!plotId) {
         throw new Error('plotId is undefined');
     }
-    const url = `${API_BASE_URL}/api/game-logs/recent/${plotId}?limit=${limit}`;
-    try {
-        const response = await fetch(url, { 
-            method: 'GET', 
-            headers: { 
-                'Content-Type': 'application/json',
-                'Cookie': cookies 
-            }
-        });
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
+    const logs = await GameLog.find({ plotId })
+        .sort({ _id: -1 })
+        .limit(3);
+
+    if (!logs.length) return [];
+
+    const allMessages = [];
+    for (const log of logs) {
+        for (const msg of log.messages) {
+            allMessages.push(msg);
         }
-        const data = await response.json();
-        return data.messages;
-    } catch (error) {
-        console.error(`Error fetching recent messages: ${error.message}`);
-        throw error;
     }
+
+    // Sort by timestamp descending, take the most recent
+    allMessages.sort((a, b) => b.timestamp - a.timestamp);
+    const recent = allMessages.slice(0, limit).reverse();
+    return recent;
 };
 
 /**
@@ -218,12 +211,12 @@ const ensurePlayerLocation = async (plot) => {
 /**
  * Main interpretation function - The Indifferent World
  */
-const interpret = async (input, inputType, plotId, cookies) => {
+const interpret = async (input, inputType, plotId) => {
     try {
         // Get recent messages for context
         let recentMessages = [];
         try {
-            recentMessages = await getRecentMessages(plotId, 20, cookies);
+            recentMessages = await getRecentMessages(plotId, 20);
         } catch (e) {
             console.log('No recent messages found, starting fresh');
         }
@@ -632,13 +625,13 @@ const updateCurrentState = async (plot, input, result) => {
 /**
  * Streaming version of interpret - yields text chunks as they come
  */
-const interpretStream = async function* (input, inputType, plotId, cookies) {
+const interpretStream = async function* (input, inputType, plotId) {
     const startTime = Date.now();
     try {
         // Get recent messages for context
         let recentMessages = [];
         try {
-            recentMessages = await getRecentMessages(plotId, 20, cookies);
+            recentMessages = await getRecentMessages(plotId, 20);
         } catch (e) {
             console.log('No recent messages found, starting fresh');
         }

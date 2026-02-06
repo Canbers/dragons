@@ -168,6 +168,7 @@ const summarizeLogs = async (logs) => {
 };
 
 module.exports = {
+    openai,
     prompt,
     simplePrompt,
     streamPrompt,
