@@ -7,6 +7,7 @@
 
 const Plot = require('../db/models/Plot');
 const Settlement = require('../db/models/Settlement');
+const Poi = require('../db/models/Poi');
 const { computeLayout } = require('./layoutService');
 
 /**
@@ -89,8 +90,11 @@ async function getCurrentLocation(plotId) {
         };
     });
     
-    // Get POIs at current location
-    const pois = (currentLocation?.pois || []).map(poi => ({
+    // Get POIs at current location from standalone collection
+    const poiDocs = currentLocation
+        ? await Poi.find({ settlement: settlement._id, locationId: currentLocation._id })
+        : [];
+    const pois = poiDocs.map(poi => ({
         id: poi._id,
         name: poi.name,
         type: poi.type,

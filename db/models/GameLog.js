@@ -14,6 +14,27 @@ const MessageSchema = new Schema({
     content: {
         type: String,
         required: true
+    },
+    sceneEntities: {
+        npcs: [String],
+        objects: [String],
+        features: [String],
+        locations: [String],
+        currentLocation: String
+    },
+    discoveries: [{
+        name: String,
+        type: String,
+        description: String
+    }],
+    skillCheck: {
+        action: String,
+        type: String,
+        difficulty: String,
+        roll: Number,
+        minPass: Number,
+        strongPass: Number,
+        result: String
     }
 });
 

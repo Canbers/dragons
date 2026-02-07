@@ -124,6 +124,33 @@ const Plot = new Schema(
             },
             mood_tone: {
                 type: String, // e.g., "tense", "relaxed"
+            },
+            sceneContext: {
+                summary: { type: String, default: '' },
+                tension: {
+                    type: String,
+                    enum: ['calm', 'cautious', 'tense', 'hostile', 'critical'],
+                    default: 'calm'
+                },
+                npcsPresent: [{
+                    _id: false,
+                    name: String,
+                    status: {
+                        type: String,
+                        enum: ['engaged', 'observing', 'leaving', 'hostile', 'unconscious', 'fled', 'dead'],
+                        default: 'observing'
+                    },
+                    attitude: {
+                        type: String,
+                        enum: ['friendly', 'neutral', 'wary', 'hostile', 'terrified'],
+                        default: 'neutral'
+                    },
+                    intent: { type: String, default: '' }
+                }],
+                activeEvents: [String],
+                playerGoal: { type: String, default: '' },
+                recentOutcomes: [String],
+                turnCount: { type: Number, default: 0 }
             }
         },
         quests: [

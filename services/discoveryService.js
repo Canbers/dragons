@@ -52,14 +52,14 @@ AI RESPONSE: "${aiResponse}"
 Extract ONLY things that are NEWLY INTRODUCED in the AI response (not things already mentioned by the player).
 
 Look for:
-1. NAMED NPCs (characters with actual names, not generic "a guard")
+1. NAMED NPCs (characters with actual names, not generic "a guard"). Include a "disposition" — a short phrase for their personality/mood based on context clues in the narrative.
 2. NOTABLE OBJECTS (specific items that seem important)
 3. NEW LOCATIONS mentioned (exits, doors leading somewhere new)
 
 Return JSON (empty arrays if nothing new):
 {
     "npcs": [
-        { "name": "Grimjaw", "description": "grizzled barkeep with a scar" }
+        { "name": "Grimjaw", "description": "grizzled barkeep with a scar", "disposition": "gruff but fair, respects direct talk" }
     ],
     "objects": [
         { "name": "Notice Board", "description": "covered in faded papers" }
@@ -93,7 +93,7 @@ IMPORTANT: Only include things with PROPER NAMES. Skip generic descriptions like
         if (discoveries.npcs?.length > 0) {
             for (const npc of discoveries.npcs) {
                 if (!npc.name) continue;
-                
+
                 const poi = await settlementsFactory.addPoi(
                     settlement._id,
                     currentLocationName,
@@ -101,22 +101,26 @@ IMPORTANT: Only include things with PROPER NAMES. Skip generic descriptions like
                         name: npc.name,
                         type: 'npc',
                         description: npc.description || '',
-                        persistent: true
+                        disposition: npc.disposition || '',
+                        persistent: true,
+                        discovered: true  // Mentioned in narrative = discovered
                     }
                 );
-                
-                if (poi) {
-                    applied.npcs.push(npc.name);
-                    console.log(`[Discovery] Added NPC: ${npc.name}`);
+
+                if (poi && poi._isNew) {
+                    applied.npcs.push({ name: npc.name, description: npc.description || '' });
+                    console.log(`[Discovery] New NPC: ${npc.name}`);
+                } else if (poi) {
+                    console.log(`[Discovery] Already known NPC: ${npc.name}`);
                 }
             }
         }
-        
+
         // Apply object discoveries as POIs
         if (discoveries.objects?.length > 0) {
             for (const obj of discoveries.objects) {
                 if (!obj.name) continue;
-                
+
                 const poi = await settlementsFactory.addPoi(
                     settlement._id,
                     currentLocationName,
@@ -124,13 +128,16 @@ IMPORTANT: Only include things with PROPER NAMES. Skip generic descriptions like
                         name: obj.name,
                         type: 'object',
                         description: obj.description || '',
-                        persistent: true
+                        persistent: true,
+                        discovered: true  // Mentioned in narrative = discovered
                     }
                 );
-                
-                if (poi) {
-                    applied.objects.push(obj.name);
-                    console.log(`[Discovery] Added object: ${obj.name}`);
+
+                if (poi && poi._isNew) {
+                    applied.objects.push({ name: obj.name, description: obj.description || '' });
+                    console.log(`[Discovery] New object: ${obj.name}`);
+                } else if (poi) {
+                    console.log(`[Discovery] Already known object: ${obj.name}`);
                 }
             }
         }
@@ -158,7 +165,7 @@ IMPORTANT: Only include things with PROPER NAMES. Skip generic descriptions like
                             description: newLoc.description || ''
                         });
                         
-                        applied.locations.push(newLoc.name);
+                        applied.locations.push({ name: newLoc.name, description: newLoc.description || '' });
                         console.log(`[Discovery] Added connection: ${newLoc.name}`);
                     }
                 }

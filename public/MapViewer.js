@@ -16,8 +16,10 @@ class MapViewer {
     this.currentPlotId = null;
     this.currentCharacterId = null;
     this.mapData = null;
+    this.liveSceneEntities = null; // Live data from SSE scene_entities events
+    this.sceneContext = null; // Persistent scene state from AI
     this.isMoving = false; // Prevent double-clicks during movement
-    
+
     this.render();
   }
 
@@ -25,7 +27,23 @@ class MapViewer {
     this.currentPlotId = plotId;
     this.currentCharacterId = characterId;
     await this.fetchMapData();
+    await this.fetchSceneContext();
     this.render();
+  }
+
+  async fetchSceneContext() {
+    if (!this.currentPlotId) return;
+    try {
+      const response = await fetch(`/api/plots/${this.currentPlotId}/scene-context`);
+      if (response.ok) {
+        const data = await response.json();
+        if (data && data.summary) {
+          this.sceneContext = data;
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching scene context:', error);
+    }
   }
 
   async fetchMapData() {
@@ -446,50 +464,123 @@ class MapViewer {
   }
 
   renderSceneView() {
-    const scene = this.mapData.scene || {};
-    const pois = scene.pois || [];
-    
-    if (pois.length === 0) {
-      return `
-        <div class="scene-view">
-          <div class="scene-header">
-            <h3>🔍 ${scene.location || 'Current Location'}</h3>
-          </div>
-          ${scene.description ? `<p class="scene-description">${scene.description}</p>` : ''}
-          <div class="map-placeholder">
-            <p>No points of interest discovered here yet.</p>
-            <p class="hint">Interact with the world to discover NPCs, objects, and landmarks!</p>
-          </div>
-        </div>
-      `;
+    const scene = this.mapData?.scene || {};
+    const live = this.liveSceneEntities || {};
+    const ctx = this.sceneContext || {};
+
+    // ---- TENSION BAR ----
+    const tension = ctx.tension || 'calm';
+    const tensionHtml = `<div class="scene-tension-bar scene-tension--${tension}"></div>`;
+
+    // ---- HEADER ----
+    const locationName = scene.location || live.currentLocation || 'Current Location';
+    const headerHtml = `<div class="scene-header"><h3>${this.escapeHtml(locationName)}</h3></div>`;
+
+    // ---- SUMMARY ----
+    const summaryHtml = ctx.summary
+      ? `<p class="scene-summary">${this.escapeHtml(ctx.summary)}</p>`
+      : '';
+
+    // ---- PLAYER GOAL ----
+    const goalHtml = ctx.playerGoal
+      ? `<div class="scene-goal">${this.escapeHtml(ctx.playerGoal)}</div>`
+      : '';
+
+    // ---- ACTIVE EVENTS ----
+    let eventsHtml = '';
+    if (ctx.activeEvents && ctx.activeEvents.length > 0) {
+      const tags = ctx.activeEvents.map(e =>
+        `<span class="scene-event-tag">${this.escapeHtml(e)}</span>`
+      ).join('');
+      eventsHtml = `<div class="scene-section"><span class="scene-section-label">Ongoing</span><div class="scene-event-tags">${tags}</div></div>`;
     }
 
-    const poiList = pois.map((poi, index) => {
-      const icon = poi.icon || this.getPoiIcon(poi.type);
+    // ---- NPCs (merge scene context + live entities) ----
+    const ctxNpcNames = new Set((ctx.npcsPresent || []).map(n => n.name.toLowerCase()));
+    let npcsHtml = '';
+
+    // Rich NPC cards from scene context
+    const npcCards = (ctx.npcsPresent || []).map(npc => {
+      const attClass = npc.attitude || 'neutral';
       return `
-        <div class="poi-card" data-poi-id="${poi.id}" data-poi-index="${index}">
-          <div class="poi-header">
-            <span class="poi-icon">${icon}</span>
-            <div class="poi-info">
-              <h4>${poi.name}</h4>
-              <span class="poi-type">${poi.type}</span>
-            </div>
+        <div class="scene-npc-card" data-npc-name="${this.escapeHtml(npc.name)}">
+          <div class="scene-npc-header">
+            <span class="scene-npc-dot scene-att--${attClass}"></span>
+            <span class="scene-npc-name">${this.escapeHtml(npc.name)}</span>
+            <span class="scene-npc-attitude">${attClass}</span>
           </div>
-          <p class="poi-description">${poi.description || 'No description available.'}</p>
-          ${poi.interactionCount > 0 ? `<p class="poi-meta">Interactions: ${poi.interactionCount}</p>` : ''}
-        </div>
-      `;
+          ${npc.intent ? `<div class="scene-npc-intent">${this.escapeHtml(npc.intent)}</div>` : ''}
+        </div>`;
     }).join('');
+
+    // Basic NPC chips from live entities not in scene context (new arrivals)
+    const liveNpcs = (live.npcs || []).filter(name => !ctxNpcNames.has(name.toLowerCase()));
+    const extraNpcChips = liveNpcs.map(name =>
+      `<button class="scene-chip" data-type="npc" data-name="${this.escapeHtml(name)}">👤 ${this.escapeHtml(name)}</button>`
+    ).join('');
+
+    if (npcCards || extraNpcChips) {
+      npcsHtml = `<div class="scene-section">
+        <span class="scene-section-label">People</span>
+        ${npcCards}
+        ${extraNpcChips ? `<div class="scene-entity-chips">${extraNpcChips}</div>` : ''}
+      </div>`;
+    }
+
+    // ---- OBJECTS & FEATURES ----
+    const liveObjects = live.objects || [];
+    const liveFeatures = live.features || [];
+    let objectsHtml = '';
+    if (liveObjects.length > 0 || liveFeatures.length > 0) {
+      const chips = [
+        ...liveObjects.map(name =>
+          `<button class="scene-chip" data-type="object" data-name="${this.escapeHtml(name)}">📦 ${this.escapeHtml(name)}</button>`
+        ),
+        ...liveFeatures.map(name =>
+          `<button class="scene-chip" data-type="feature" data-name="${this.escapeHtml(name)}">📍 ${this.escapeHtml(name)}</button>`
+        )
+      ].join('');
+      objectsHtml = `<div class="scene-section"><span class="scene-section-label">Objects & Features</span><div class="scene-entity-chips">${chips}</div></div>`;
+    }
+
+    // ---- EXITS ----
+    const liveLocations = live.locations || [];
+    let exitsHtml = '';
+    if (liveLocations.length > 0) {
+      const chips = liveLocations.map(name =>
+        `<button class="scene-chip scene-chip--exit" data-type="exit" data-name="${this.escapeHtml(name)}">🚪 ${this.escapeHtml(name)}</button>`
+      ).join('');
+      exitsHtml = `<div class="scene-section"><span class="scene-section-label">Exits</span><div class="scene-entity-chips">${chips}</div></div>`;
+    }
+
+    // ---- RECENT OUTCOMES ----
+    let outcomesHtml = '';
+    if (ctx.recentOutcomes && ctx.recentOutcomes.length > 0) {
+      const items = ctx.recentOutcomes.map(o =>
+        `<li>${this.escapeHtml(o)}</li>`
+      ).join('');
+      outcomesHtml = `<div class="scene-section"><span class="scene-section-label">Recent</span><ul class="scene-outcomes-list">${items}</ul></div>`;
+    }
+
+    // ---- EMPTY STATE ----
+    const hasContent = ctx.summary || (ctx.npcsPresent && ctx.npcsPresent.length > 0) ||
+      liveNpcs.length > 0 || liveObjects.length > 0 || liveFeatures.length > 0 || liveLocations.length > 0;
+    const emptyHtml = !hasContent
+      ? `<div class="map-placeholder"><p>Scene will populate as you interact with the world.</p><p class="hint">Take an action to discover what's around you!</p></div>`
+      : '';
 
     return `
       <div class="scene-view">
-        <div class="scene-header">
-          <h3>🔍 ${scene.location || 'Current Location'}</h3>
-        </div>
-        ${scene.description ? `<p class="scene-description">${scene.description}</p>` : ''}
-        <div class="poi-list">
-          ${poiList}
-        </div>
+        ${tensionHtml}
+        ${headerHtml}
+        ${summaryHtml}
+        ${goalHtml}
+        ${eventsHtml}
+        ${npcsHtml}
+        ${objectsHtml}
+        ${exitsHtml}
+        ${outcomesHtml}
+        ${emptyHtml}
       </div>
     `;
   }
@@ -540,6 +631,33 @@ class MapViewer {
       card.addEventListener('click', () => {
         const poiIndex = parseInt(card.dataset.poiIndex);
         this.showPoiActions(poiIndex);
+      });
+    });
+
+    // NPC card clicks (from scene context)
+    const npcCards = this.container.querySelectorAll('.scene-npc-card');
+    npcCards.forEach(card => {
+      card.addEventListener('click', () => {
+        const name = card.dataset.npcName;
+        if (name) this.executeCustomAction(`I speak to ${name}`);
+      });
+    });
+
+    // Scene entity chip clicks
+    const sceneChips = this.container.querySelectorAll('.scene-chip');
+    sceneChips.forEach(chip => {
+      chip.addEventListener('click', () => {
+        const type = chip.dataset.type;
+        const name = chip.dataset.name;
+        if (type === 'npc') {
+          this.executeCustomAction(`I speak to ${name}`);
+        } else if (type === 'object') {
+          this.executeCustomAction(`I examine the ${name}`);
+        } else if (type === 'feature') {
+          this.executeCustomAction(`I check out the ${name}`);
+        } else if (type === 'exit') {
+          this.executeCustomAction(`I go to ${name}`);
+        }
       });
     });
 
@@ -819,6 +937,38 @@ class MapViewer {
     const submitBtn = document.getElementById('submit-btn');
     if (submitBtn) {
       submitBtn.click();
+    }
+  }
+
+  /**
+   * Update scene context from SSE data (post-narrative AI analysis)
+   */
+  updateSceneContext(context) {
+    if (!context) return;
+    this.sceneContext = context;
+
+    // Re-render if currently viewing the scene tab
+    if (this.currentZoom === 'scene') {
+      this.render();
+    }
+  }
+
+  /**
+   * Update live scene entities from SSE data.
+   * Merges NPCs, objects, and exits into the scene view.
+   */
+  updateSceneEntities(entities) {
+    if (!entities) return;
+    this.liveSceneEntities = entities;
+
+    // Update scene location name if available
+    if (entities.currentLocation && this.mapData?.scene) {
+      this.mapData.scene.location = entities.currentLocation;
+    }
+
+    // Re-render if currently viewing the scene tab
+    if (this.currentZoom === 'scene') {
+      this.render();
     }
   }
 

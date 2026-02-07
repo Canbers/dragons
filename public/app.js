@@ -187,8 +187,40 @@ async function waitForInitialization(initPlotId) {
     });
 }
 
+// ========== GAME CONSOLE ==========
+function appendConsoleEntry(debug) {
+    const log = document.getElementById('game-console-log');
+    if (!log) return;
+    const entry = document.createElement('div');
+    entry.className = `gc-entry gc-${debug.category || 'system'}`;
+    const time = new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const tag = (debug.category || 'sys').toUpperCase().padEnd(4).substring(0, 4);
+    entry.innerHTML = `<span class="gc-time">${time}</span> <span class="gc-tag">[${tag}]</span> ${debug.message}${debug.detail ? `<span class="gc-detail"> — ${debug.detail}</span>` : ''}`;
+    log.appendChild(entry);
+    log.scrollTop = log.scrollHeight;
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
     setupAuthUI();
+
+    // Console toggle
+    const consoleToggle = document.getElementById('console-toggle');
+    const gameConsole = document.getElementById('game-console');
+    const consoleClear = document.getElementById('console-clear');
+    if (consoleToggle && gameConsole) {
+        consoleToggle.addEventListener('click', () => {
+            const visible = gameConsole.style.display !== 'none';
+            gameConsole.style.display = visible ? 'none' : 'flex';
+            consoleToggle.classList.toggle('gc-active', !visible);
+        });
+    }
+    if (consoleClear) {
+        consoleClear.addEventListener('click', () => {
+            const log = document.getElementById('game-console-log');
+            if (log) log.innerHTML = '';
+        });
+    }
+
     const urlParams = new URLSearchParams(window.location.search);
     plotId = urlParams.get('plotId'); // Assign to global plotId
     const characterId = urlParams.get('characterId');
@@ -567,6 +599,38 @@ async function fetchGameInfo(plotId, characterId) {
     fetchRecentGameLog(plotId); // Fetch the most recent game log after game info
 }
 
+    // Sidebar-only refresh: updates character sheet, context bar, map — does NOT touch the game log
+    async function refreshSidebar() {
+        try {
+            const response = await fetch(`/api/game-info?plotId=${plotId}&characterId=${characterId}`);
+            if (response.status === 401) { window.location.href = '/authorize'; return; }
+            if (!response.ok) return;
+            const { plot, character } = await response.json();
+
+            if (plot.current_state.current_location.region) {
+                const regionId = plot.current_state.current_location.region._id || plot.current_state.current_location.region;
+                const region = await fetchRegionDetails(regionId);
+                if (region) plot.current_state.current_location.region = region;
+            }
+
+            displayGameInfo(plot, character);
+
+            if (plot.world && plot.world._id && plot.current_state.current_location.region) {
+                const regionId = plot.current_state.current_location.region._id || plot.current_state.current_location.region;
+                currentRegionId = regionId;
+                const region = await fetchRegionDetails(regionId);
+                const settlements = await fetchSettlementsByRegionId(regionId);
+                const playerLocation = plot.current_state.current_location.coordinates;
+                if (region && Array.isArray(region.map) && region.map.length > 0) {
+                    renderMap(region.map);
+                    drawOverlay(settlements, playerLocation);
+                }
+            }
+        } catch (error) {
+            console.error('Error refreshing sidebar:', error);
+        }
+    }
+
     async function displayGameInfo(plot, character) {
     // Display current state information in the UI
     const currentState = plot.current_state || {};
@@ -854,7 +918,7 @@ async function fetchGameInfo(plotId, characterId) {
 
     // Quick action buttons - use event delegation so we never need to rebind
     document.getElementById('quick-actions').addEventListener('click', (e) => {
-        const button = e.target.closest('.quick-action');
+        const button = e.target.closest('.quick-action') || e.target.closest('.ap-action');
         if (button && button.dataset.action) {
             inputField.value = button.dataset.action;
             submitAction();
@@ -930,15 +994,15 @@ async function fetchGameInfo(plotId, characterId) {
                 handlePlayerInput(inputText); // Display player input
                 inputField.value = ''; // Clear input field immediately
                 
-                // Create streaming response container
+                // Create streaming response container (narrating indicator, not raw text)
                 const gameLog = document.getElementById('game-log');
                 const streamId = 'stream-' + Date.now();
                 const timestamp = new Date().toLocaleTimeString();
                 gameLog.innerHTML += `
                     <div id="${streamId}" class="message ai streaming">
-                        <div class="author">AI:</div>
                         <div class="systemText">
-                            <span class="stream-content"></span>
+                            <span class="stream-narrating">The story unfolds...</span>
+                            <span class="stream-content" style="display:none;"></span>
                             <span class="stream-cursor">▌</span>
                             <span class="timestamp" style="display:none;">${timestamp}</span>
                         </div>
@@ -951,6 +1015,9 @@ async function fetchGameInfo(plotId, characterId) {
                 const streamCursor = document.querySelector(`#${streamId} .stream-cursor`);
                 const timestampEl = document.querySelector(`#${streamId} .timestamp`);
                 let fullMessage = '';
+                let currentSceneEntities = null;
+                let currentDiscoveries = null;
+                let currentSkillCheck = null;
 
                 // Use streaming endpoint
                 const response = await fetch('/api/input/stream', {
@@ -1000,26 +1067,163 @@ async function fetchGameInfo(plotId, characterId) {
                                     gameLog.scrollTop = gameLog.scrollHeight;
                                 }
 
+                                if (data.skill_check) {
+                                    currentSkillCheck = data.skill_check;
+                                    const sc = data.skill_check;
+                                    const resultLabels = { fail: 'Failed', pass: 'Passed', strong_success: 'Critical!' };
+                                    const typeLabels = { physical: 'Physical', social: 'Social', mental: 'Mental', survival: 'Survival' };
+
+                                    // Remove tool status
+                                    const toolStatus = document.querySelector(`#${streamId} .tool-status`);
+                                    if (toolStatus) toolStatus.remove();
+
+                                    // Insert dice roll element before the stream-narrating indicator
+                                    const systemText = document.querySelector(`#${streamId} .systemText`);
+                                    const narratingEl = document.querySelector(`#${streamId} .stream-narrating`);
+                                    const diceEl = document.createElement('div');
+                                    diceEl.className = `dr-container dr-container--${sc.result}`;
+                                    diceEl.innerHTML = `
+                                        <div class="dr-die dr-rolling">🎲</div>
+                                        <div class="dr-value">${sc.roll}</div>
+                                        <div class="dr-info">
+                                            <span class="dr-type">${typeLabels[sc.type] || sc.type} Check — ${sc.difficulty}</span>
+                                            <span class="dr-action">${sc.action}</span>
+                                        </div>
+                                        <span class="dr-result">${resultLabels[sc.result] || sc.result}</span>
+                                    `;
+                                    systemText.insertBefore(diceEl, narratingEl);
+                                    gameLog.scrollTop = gameLog.scrollHeight;
+
+                                    // After 2s, reveal the result (stop tumble, show value/info/result)
+                                    setTimeout(() => {
+                                        diceEl.classList.add('dr-revealed');
+                                    }, 2000);
+                                }
+
+                                if (data.debug) {
+                                    appendConsoleEntry(data.debug);
+                                }
+
+                                if (data.scene_context) {
+                                    if (window.mapViewer) {
+                                        window.mapViewer.updateSceneContext(data.scene_context);
+                                    }
+                                }
+
+                                if (data.scene_entities) {
+                                    currentSceneEntities = data.scene_entities;
+                                    if (window.mapViewer) {
+                                        window.mapViewer.updateSceneEntities(data.scene_entities);
+                                    }
+                                }
+
                                 if (data.chunk) {
                                     // Remove tool status once narrative starts
                                     const toolStatus = document.querySelector(`#${streamId} .tool-status`);
                                     if (toolStatus) toolStatus.remove();
 
+                                    // Accumulate text but don't show raw — will format on completion
                                     fullMessage += data.chunk;
-                                    streamContainer.textContent = fullMessage;
-                                    gameLog.scrollTop = gameLog.scrollHeight;
+                                }
+
+                                if (data.discoveries) {
+                                    currentDiscoveries = data.discoveries;
+                                }
+
+                                if (data.categorized_actions) {
+                                    console.log('[SSE] Received categorized_actions:', data.categorized_actions);
+                                    if (window.ActionPanel) {
+                                        ActionPanel.updateActions(data.categorized_actions);
+                                    }
                                 }
 
                                 if (data.suggested_actions) {
                                     console.log('[SSE] Received suggested_actions:', data.suggested_actions);
-                                    updateDynamicActions(data.suggested_actions);
+                                    if (window.ActionPanel) {
+                                        ActionPanel.updateFlatActions(data.suggested_actions);
+                                    } else {
+                                        updateDynamicActions(data.suggested_actions);
+                                    }
                                 }
 
                                 if (data.done) {
                                     // Refresh map viewer after action completes
                                     if (window.mapViewer) {
                                         await window.mapViewer.refresh();
+
+                                        // Poll for background scene context update
+                                        // (scene context GPT call runs fire-and-forget on the server
+                                        //  to avoid blocking the response; poll until it lands in DB)
+                                        const prevTurn = window.mapViewer.sceneContext?.turnCount || 0;
+                                        let pollAttempts = 0;
+                                        const pollInterval = setInterval(async () => {
+                                            pollAttempts++;
+                                            try {
+                                                const scRes = await fetch(`/api/plots/${plotId}/scene-context`, {
+                                                    headers: { 'Authorization': `Bearer ${token}` }
+                                                });
+                                                if (scRes.ok) {
+                                                    const scData = await scRes.json();
+                                                    if (scData && scData.turnCount > prevTurn) {
+                                                        window.mapViewer.updateSceneContext(scData);
+
+                                                        // Reconcile live entity chips with scene context
+                                                        // Remove NPCs that the AI determined are no longer present
+                                                        if (window.mapViewer.liveSceneEntities) {
+                                                            const contextNpcs = (scData.npcsPresent || []).map(n => n.name.toLowerCase());
+                                                            const reconciled = { ...window.mapViewer.liveSceneEntities };
+                                                            reconciled.npcs = reconciled.npcs.filter(name =>
+                                                                contextNpcs.some(cn => cn.includes(name.toLowerCase()) || name.toLowerCase().includes(cn))
+                                                            );
+                                                            window.mapViewer.updateSceneEntities(reconciled);
+                                                        }
+
+                                                        clearInterval(pollInterval);
+                                                    }
+                                                }
+                                            } catch (e) { /* non-critical */ }
+                                            if (pollAttempts >= 10) clearInterval(pollInterval); // give up after 30s
+                                        }, 3000);
                                     }
+
+                                    // Hide narrating indicator, reveal formatted content
+                                    const narratingEl = document.querySelector(`#${streamId} .stream-narrating`);
+                                    if (narratingEl) narratingEl.style.display = 'none';
+                                    streamContainer.style.display = '';
+
+                                    // Post-process narrative: dialogue bubbles + entity links
+                                    if (window.NarrativeFormatter && fullMessage) {
+                                        const formattedHtml = NarrativeFormatter.formatCompletedMessage(fullMessage, currentSceneEntities);
+                                        streamContainer.innerHTML = formattedHtml;
+
+                                        // Attach click handlers on entity links
+                                        streamContainer.querySelectorAll('.nf-entity-link').forEach(el => {
+                                            el.addEventListener('click', function (e) {
+                                                e.stopPropagation();
+                                                NarrativeFormatter.showEntityMenu(el, el.dataset.entityName, el.dataset.entityType);
+                                            });
+                                        });
+
+                                        // Render discovery cards if any
+                                        if (currentDiscoveries && currentDiscoveries.length > 0) {
+                                            const cardsHtml = NarrativeFormatter.renderDiscoveryCards(currentDiscoveries);
+                                            const systemText = document.querySelector(`#${streamId} .systemText`);
+                                            if (systemText) {
+                                                const cardsDiv = document.createElement('div');
+                                                cardsDiv.innerHTML = cardsHtml;
+                                                systemText.insertBefore(cardsDiv, timestampEl);
+
+                                                // Attach click handlers on discovery cards
+                                                cardsDiv.querySelectorAll('.ec-card').forEach(card => {
+                                                    card.addEventListener('click', function (e) {
+                                                        e.stopPropagation();
+                                                        NarrativeFormatter.showEntityMenu(card, card.dataset.entityName, card.dataset.entityType);
+                                                    });
+                                                });
+                                            }
+                                        }
+                                    }
+
                                     // Stream complete
                                     streamCursor.style.display = 'none';
                                     timestampEl.style.display = 'inline';
@@ -1037,7 +1241,7 @@ async function fetchGameInfo(plotId, characterId) {
                     }
                 }
 
-                // Save the game log entries
+                // Save the game log entries (with metadata for formatting on reload)
                 const headers = {
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${token}`
@@ -1047,14 +1251,18 @@ async function fetchGameInfo(plotId, characterId) {
                     headers: headers,
                     body: JSON.stringify({ plotId, author: 'Player', content: inputText })
                 });
+                const aiLogBody = { plotId, author: 'AI', content: fullMessage };
+                if (currentSceneEntities) aiLogBody.sceneEntities = currentSceneEntities;
+                if (currentDiscoveries && currentDiscoveries.length > 0) aiLogBody.discoveries = currentDiscoveries;
+                if (currentSkillCheck) aiLogBody.skillCheck = currentSkillCheck;
                 await fetch('/api/game-logs', {
                     method: 'POST',
                     headers: headers,
-                    body: JSON.stringify({ plotId, author: 'AI', content: fullMessage })
+                    body: JSON.stringify(aiLogBody)
                 });
                 
-                // Refresh game info to update character sheet and state panel
-                fetchGameInfo(plotId, characterId);
+                // Refresh sidebar only (character, map, context bar) — don't wipe the game log
+                refreshSidebar();
             }
         } catch (error) {
             console.error('Error while submitting action:', error);
@@ -1140,7 +1348,6 @@ async function fetchGameInfo(plotId, characterId) {
         const gameLog = document.getElementById('game-log');
         const worldDetails = `
             <div class="message ai">
-                <div class="author">AI:</div>
                 <div class="systemText">
                     <em>You open your eyes...</em><br><br>
                     You find yourself in <strong>${data.settlement.name}</strong>, a settlement in the ${data.region.name} region of ${data.world.name}.<br><br>
@@ -1165,7 +1372,6 @@ async function fetchGameInfo(plotId, characterId) {
         // Just mention that there are things happening - don't dump all quest details
         let questsMessage = `
             <div class="message ai">
-                <div class="author">AI:</div>
                 <div class="systemText">
                     As you take in your surroundings, you notice the locals seem preoccupied. Snippets of conversation drift past:<br><br>`;
         
@@ -1226,53 +1432,122 @@ async function fetchGameInfo(plotId, characterId) {
         }
     }
 
+    // Render a single message with formatting (shared by all display functions)
+    function renderMessage(message) {
+        const isPlayer = message.author.toLowerCase() === 'player';
+        const authorClass = isPlayer ? 'user' : 'ai';
+        const messageClass = isPlayer ? 'userText' : 'systemText';
+        const charName = document.getElementById('character-name')?.textContent || 'Player';
+        const authorLabel = isPlayer ? charName : '';
+        const timestamp = new Date(message.timestamp).toLocaleTimeString();
+
+        let contentHtml;
+        if (isPlayer) {
+            // Player messages: escape and show as-is
+            const div = document.createElement('div');
+            div.textContent = message.content;
+            contentHtml = div.innerHTML;
+        } else if (window.NarrativeFormatter) {
+            // AI messages: format with dialogue bubbles + entity links
+            // Prepend skill check display if present
+            if (message.skillCheck) {
+                const sc = message.skillCheck;
+                const resultLabels = { fail: 'Failed', pass: 'Passed', strong_success: 'Critical!' };
+                const typeLabels = { physical: 'Physical', social: 'Social', mental: 'Mental', survival: 'Survival' };
+                contentHtml = `<div class="dr-container dr-container--${sc.result} dr-revealed">
+                    <div class="dr-die">🎲</div>
+                    <div class="dr-value">${sc.roll}</div>
+                    <div class="dr-info">
+                        <span class="dr-type">${typeLabels[sc.type] || sc.type} Check — ${sc.difficulty}</span>
+                        <span class="dr-action">${sc.action}</span>
+                    </div>
+                    <span class="dr-result">${resultLabels[sc.result] || sc.result}</span>
+                </div>`;
+            } else {
+                contentHtml = '';
+            }
+            contentHtml += NarrativeFormatter.formatCompletedMessage(
+                message.content,
+                message.sceneEntities || null
+            );
+            // Append discovery cards if present
+            if (message.discoveries && message.discoveries.length > 0) {
+                contentHtml += NarrativeFormatter.renderDiscoveryCards(message.discoveries);
+            }
+        } else {
+            contentHtml = message.content;
+        }
+
+        const entry = document.createElement('div');
+        entry.className = `message ${authorClass}`;
+        entry.innerHTML = `
+            ${authorLabel ? `<div class="author ${authorClass}">${authorLabel}</div>` : ''}
+            <div class="${messageClass}">
+                ${contentHtml}
+                <span class="timestamp">${timestamp}</span>
+            </div>
+        `;
+
+        // Attach entity click handlers
+        entry.querySelectorAll('.nf-entity-link').forEach(el => {
+            el.addEventListener('click', function (e) {
+                e.stopPropagation();
+                NarrativeFormatter.showEntityMenu(el, el.dataset.entityName, el.dataset.entityType);
+            });
+        });
+        entry.querySelectorAll('.ec-card').forEach(card => {
+            card.addEventListener('click', function (e) {
+                e.stopPropagation();
+                NarrativeFormatter.showEntityMenu(card, card.dataset.entityName, card.dataset.entityType);
+            });
+        });
+
+        return entry;
+    }
+
     function displayGameLogs(logs) {
         const gameLog = document.getElementById('game-log');
         gameLog.innerHTML = '';
         logs.forEach(message => {
-            const authorClass = message.author.toLowerCase() === 'player' ? 'user' : 'ai';
-            const messageClass = message.author.toLowerCase() === 'player' ? 'userText' : 'systemText';
-            const logEntry = `
-                <div class="message ${authorClass}">
-                    <div class="author ${authorClass}">${message.author}:</div>
-                    <div class="${messageClass}">
-                        ${message.content}
-                        <span class="timestamp">${new Date(message.timestamp).toLocaleTimeString()}</span>
-                    </div>
-                </div>
-            `;
-            gameLog.innerHTML += logEntry;
+            gameLog.appendChild(renderMessage(message));
         });
         gameLog.scrollTop = gameLog.scrollHeight;
+
+        // Populate map scene view from the last AI message with sceneEntities
+        for (let i = logs.length - 1; i >= 0; i--) {
+            if (logs[i].author?.toLowerCase() !== 'player' && logs[i].sceneEntities) {
+                if (window.mapViewer) {
+                    window.mapViewer.updateSceneEntities(logs[i].sceneEntities);
+                }
+                break;
+            }
+        }
     }
 
     function displayAdditionalGameLogs(messages) {
         const gameLog = document.getElementById('game-log');
+        // Insert older messages at the top, in order
+        const fragment = document.createDocumentFragment();
         messages.forEach(message => {
-            const authorClass = message.author.toLowerCase() === 'player' ? 'user' : 'ai';
-            const messageClass = message.author.toLowerCase() === 'player' ? 'userText' : 'systemText';
-            const logEntry = `
-                <div class="message ${authorClass}">
-                    <div class="author ${authorClass}">${message.author}:</div>
-                    <div class="${messageClass}">
-                        ${message.content}
-                        <span class="timestamp">${new Date(message.timestamp).toLocaleTimeString()}</span>
-                    </div>
-                </div>
-            `;
-            gameLog.insertAdjacentHTML('afterbegin', logEntry); // Insert at the beginning
+            fragment.appendChild(renderMessage(message));
         });
+        gameLog.insertBefore(fragment, gameLog.firstChild);
     }
 
     async function handlePlayerInput(inputText) {
         const gameLog = document.getElementById('game-log');
         const timestamp = new Date().toLocaleTimeString();
+        const charName = document.getElementById('character-name')?.textContent || 'Player';
+        // Escape HTML in player input
+        const div = document.createElement('div');
+        div.textContent = inputText;
+        const escapedInput = div.innerHTML;
 
         gameLog.innerHTML += `
           <div class="message user">
-            <div class="author user">Player:</div>
+            <div class="author user">${charName}</div>
             <div class="userText">
-              ${inputText}
+              ${escapedInput}
               <span class="timestamp">${timestamp}</span>
             </div>
           </div>
@@ -1298,14 +1573,18 @@ async function fetchGameInfo(plotId, characterId) {
         
         gameLog.innerHTML += `
           <div class="message ai ${response.consequence ? 'consequence-' + response.consequence : ''}">
-            <div class="author">AI: ${indicator}</div>
             <div class="systemText">
-            ${response.message}
+            ${indicator}${response.message}
               <span class="timestamp">${timestamp}</span>
             </div>
           </div>
         `;
         gameLog.scrollTop = gameLog.scrollHeight;
+    }
+
+    // Initialize keyboard shortcuts
+    if (window.ActionPanel) {
+        ActionPanel.initKeyboard();
     }
 
     // Fetch initial game info and characters
@@ -1601,15 +1880,18 @@ async function fetchGameInfo(plotId, characterId) {
     window.appendToGameLog = function(author, content) {
         const gameLog = document.getElementById('game-log');
         if (!gameLog) return;
-        
+
         const timestamp = new Date().toLocaleTimeString();
-        const authorClass = author.toLowerCase() === 'player' ? 'user' : 'ai';
-        const messageClass = author.toLowerCase() === 'player' ? 'userText' : 'systemText';
-        
+        const isPlayer = author.toLowerCase() === 'player';
+        const authorClass = isPlayer ? 'user' : 'ai';
+        const messageClass = isPlayer ? 'userText' : 'systemText';
+        const charName = document.getElementById('character-name')?.textContent || 'Player';
+        const displayLabel = isPlayer ? charName : '';
+
         const entry = document.createElement('div');
         entry.className = `message ${authorClass}`;
         entry.innerHTML = `
-            <div class="author ${authorClass}">${author}:</div>
+            ${displayLabel ? `<div class="author ${authorClass}">${displayLabel}</div>` : ''}
             <div class="${messageClass}">
                 ${content}
                 <span class="timestamp">${timestamp}</span>

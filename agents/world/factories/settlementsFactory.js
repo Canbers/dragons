@@ -1,4 +1,5 @@
 const Settlement = require('../../../db/models/Settlement');
+const Poi = require('../../../db/models/Poi');
 const { uuid } = require('uuidv4');
 const gpt = require('../../../services/gptService');
 const layoutService = require('../../../services/layoutService');
@@ -238,6 +239,7 @@ Respond with a JSON object containing a "locations" array:
       "type": "market",
       "shortDescription": "Bustling trading hub",
       "description": "A wide cobblestone plaza ringed with merchant stalls.",
+      "populationLevel": "crowded",
       "connections": [
         {"locationName": "The Cinder Gate", "direction": "southeast", "distance": "adjacent"},
         {"locationName": "The Rusty Flagon", "direction": "north", "distance": "adjacent"},
@@ -248,7 +250,8 @@ Respond with a JSON object containing a "locations" array:
 }
 
 Types: gate, market, tavern, temple, plaza, shop, residence, landmark, dungeon, district, docks, barracks, palace, other
-Distances: adjacent (nearby), close (short walk), far (across settlement)`;
+Distances: adjacent (nearby), close (short walk), far (across settlement)
+Population levels: crowded (many people — markets, festivals), populated (staff and regulars — taverns, shops), sparse (few people — alleys, warehouses), isolated (empty — ruins, caves)`;
 
     let retries = 5;
     while (retries > 0) {
@@ -292,6 +295,7 @@ Distances: adjacent (nearby), close (short walk), far (across settlement)`;
             const processedLocations = locations.map((loc, index) => ({
                 name: loc.name,
                 type: loc.type || 'other',
+                populationLevel: ['crowded', 'populated', 'sparse', 'isolated'].includes(loc.populationLevel) ? loc.populationLevel : null,
                 description: loc.description || '',
                 shortDescription: loc.shortDescription || '',
                 coordinates: {
@@ -304,7 +308,6 @@ Distances: adjacent (nearby), close (short walk), far (across settlement)`;
                     description: conn.description || '',
                     distance: conn.distance || 'adjacent'
                 })),
-                pois: [],
                 discovered: loc.isStartingLocation || false,
                 generated: true,
                 isStartingLocation: loc.isStartingLocation || false
@@ -350,7 +353,6 @@ Distances: adjacent (nearby), close (short walk), far (across settlement)`;
                         shortDescription: 'Main entrance',
                         coordinates: { x: 0, y: 0 },
                         connections: [],
-                        pois: [],
                         discovered: true,
                         generated: false,
                         isStartingLocation: true
@@ -436,7 +438,6 @@ const addLocation = async (settlementId, locationData) => {
             y: computedPos.y
         },
         connections: locationData.connections || [],
-        pois: [],
         discovered: true,  // If AI mentioned it, player knows about it
         generated: true,
         isStartingLocation: false
@@ -450,46 +451,126 @@ const addLocation = async (settlementId, locationData) => {
 };
 
 /**
- * Add or update a POI at a location
+ * Add or update a POI at a location (standalone Poi collection)
  */
 const addPoi = async (settlementId, locationName, poiData) => {
     const settlement = await Settlement.findById(settlementId);
     if (!settlement) return null;
-    
-    const location = settlement.locations.find(l => 
+
+    const location = settlement.locations.find(l =>
         l.name.toLowerCase() === locationName.toLowerCase()
     );
     if (!location) return null;
-    
-    // Check if POI already exists
-    const existingPoi = location.pois.find(p => 
-        p.name.toLowerCase() === poiData.name.toLowerCase()
-    );
-    
-    if (existingPoi) {
-        // Update existing POI
-        Object.assign(existingPoi, {
-            ...poiData,
-            interactionCount: (existingPoi.interactionCount || 0) + 1,
-            discovered: true
-        });
-    } else {
-        // Add new POI
-        location.pois.push({
-            name: poiData.name,
-            type: poiData.type || 'other',
-            description: poiData.description || '',
-            icon: poiData.icon || '',
-            persistent: poiData.persistent !== false,  // Default true
-            discovered: true,
-            interactionCount: 1,
-            metadata: poiData.metadata || {}
-        });
+
+    // Check for existing POI with same or partial name anywhere in this settlement
+    // Handles: exact match, first-name match ("Tess" matches "Tess Farrow"),
+    // and full-name match ("Tess Farrow" matches existing "Tess")
+    const escapedName = poiData.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const nameParts = escapedName.split(/\s+/);
+    const firstName = nameParts[0];
+    const isMultiWord = nameParts.length > 1;
+
+    // Build query: exact match OR first-name-of-existing starts with new name's first word
+    const nameQueries = [
+        // Exact match (case-insensitive)
+        { name: { $regex: new RegExp(`^${escapedName}$`, 'i') } },
+        // New name is a first name — match existing full names starting with it
+        // e.g. new "Tess" matches existing "Tess Farrow"
+        { name: { $regex: new RegExp(`^${firstName}\\s+`, 'i') } },
+    ];
+    // New name is a full name — match existing entries that are just the first name
+    // e.g. new "Tess Farrow" matches existing "Tess"
+    if (isMultiWord) {
+        nameQueries.push({ name: { $regex: new RegExp(`^${firstName}$`, 'i') } });
     }
-    
-    await settlement.save();
-    console.log(`[POI] Added/updated: ${poiData.name} at ${locationName}`);
-    return location.pois.find(p => p.name.toLowerCase() === poiData.name.toLowerCase());
+
+    const existing = await Poi.findOne({
+        settlement: settlementId,
+        $or: nameQueries
+    });
+
+    if (existing) {
+        // Prefer the longer (more specific) name
+        if (poiData.name.length > existing.name.length) {
+            console.log(`[POI] Upgrading name: "${existing.name}" → "${poiData.name}"`);
+            existing.name = poiData.name;
+        }
+        // Update existing POI
+        if (poiData.description) existing.description = poiData.description;
+        if (poiData.disposition && !existing.disposition) existing.disposition = poiData.disposition;
+        if (poiData.icon) existing.icon = poiData.icon;
+        if (poiData.type) existing.type = poiData.type;
+        if (poiData.metadata) existing.metadata = { ...existing.metadata, ...poiData.metadata };
+        existing.interactionCount = (existing.interactionCount || 0) + 1;
+        // Only mark discovered if explicitly requested (e.g., from discovery service)
+        if (poiData.discovered === true) existing.discovered = true;
+        // If NPC has moved to a new location, update their location
+        if (existing.locationId.toString() !== location._id.toString()) {
+            console.log(`[POI] ${existing.name} moved from ${existing.locationName} to ${locationName}`);
+            existing.locationId = location._id;
+            existing.locationName = location.name;
+        }
+        await existing.save();
+        console.log(`[POI] Updated: ${existing.name} at ${locationName}`);
+        existing._isNew = false;
+        return existing;
+    }
+
+    // Create new POI
+    const poi = await Poi.create({
+        name: poiData.name,
+        type: poiData.type || 'other',
+        description: poiData.description || '',
+        disposition: poiData.disposition || '',
+        icon: poiData.icon || '',
+        persistent: poiData.persistent !== false,
+        discovered: poiData.discovered === true,  // default false; only true when explicitly set
+        interactionCount: 1,
+        metadata: poiData.metadata || {},
+        settlement: settlementId,
+        locationId: location._id,
+        locationName: location.name,
+        autoGenerated: poiData.autoGenerated || false
+    });
+
+    console.log(`[POI] Added: ${poiData.name} at ${locationName}`);
+    poi._isNew = true;
+    return poi;
+};
+
+/**
+ * Move a POI to a different location within the same settlement
+ */
+const movePoi = async (poiId, settlementId, newLocationName) => {
+    const settlement = await Settlement.findById(settlementId);
+    if (!settlement) return null;
+
+    const newLocation = settlement.locations.find(l =>
+        l.name.toLowerCase() === newLocationName.toLowerCase()
+    );
+    if (!newLocation) return null;
+
+    const poi = await Poi.findOneAndUpdate(
+        { _id: poiId, settlement: settlementId },
+        { locationId: newLocation._id, locationName: newLocation.name },
+        { new: true }
+    );
+
+    if (poi) {
+        console.log(`[POI] Moved: ${poi.name} → ${newLocationName}`);
+    }
+    return poi;
+};
+
+/**
+ * Get all POIs at a specific location
+ */
+const getPoisAtLocation = async (settlementId, locationId, onlyDiscovered = false) => {
+    const query = { settlement: settlementId, locationId };
+    if (onlyDiscovered) {
+        query.discovered = true;
+    }
+    return await Poi.find(query);
 };
 
 module.exports = {
@@ -497,5 +578,7 @@ module.exports = {
     describe,
     generateLocations,
     ensureLocations,
-    addPoi
+    addPoi,
+    movePoi,
+    getPoisAtLocation
 };
