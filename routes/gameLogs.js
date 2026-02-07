@@ -72,7 +72,7 @@ router.get('/game-logs/:gameLogId/:plotId', ensureAuthenticated, async (req, res
 // Create or update a game log entry
 router.post('/game-logs', ensureAuthenticated, async (req, res) => {
     try {
-        const { plotId, author, content, sceneEntities, discoveries, skillCheck } = req.body;
+        const { plotId, author, content, sceneEntities, discoveries, skillCheck, questUpdates } = req.body;
         const plot = await Plot.findById(plotId).populate('gameLogs');
         if (!plot) return res.status(404).send('Plot not found');
 
@@ -98,6 +98,7 @@ router.post('/game-logs', ensureAuthenticated, async (req, res) => {
         if (sceneEntities) message.sceneEntities = sceneEntities;
         if (discoveries && discoveries.length > 0) message.discoveries = discoveries;
         if (skillCheck) message.skillCheck = skillCheck;
+        if (questUpdates && questUpdates.length > 0) message.questUpdates = questUpdates;
         gameLog.messages.push(message);
         await gameLog.save();
 
@@ -157,6 +158,12 @@ router.post('/input/stream', ensureAuthenticated, async (req, res) => {
                         break;
                     case 'scene_context':
                         res.write(`data: ${JSON.stringify({ scene_context: event.context })}\n\n`);
+                        break;
+                    case 'quest_discovered':
+                        res.write(`data: ${JSON.stringify({ quest_discovered: event.quests })}\n\n`);
+                        break;
+                    case 'quest_update':
+                        res.write(`data: ${JSON.stringify({ quest_update: event.data })}\n\n`);
                         break;
                     case 'done':
                         // handled below

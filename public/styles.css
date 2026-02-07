@@ -2116,3 +2116,173 @@ body {
   }
 }
 
+/* ============================================
+   QUEST JOURNAL
+   ============================================ */
+
+.quest-journal {
+  max-width: 600px;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+.qj-section {
+  margin-bottom: 20px;
+}
+
+.qj-section h4 {
+  color: var(--accent-gold);
+  font-family: 'Crimson Text', serif;
+  font-size: 1.1rem;
+  margin-bottom: 8px;
+  border-bottom: 1px solid rgba(255,255,255,0.1);
+  padding-bottom: 4px;
+}
+
+.qj-card {
+  background: var(--bg-input);
+  border-left: 3px solid #888;
+  border-radius: 6px;
+  padding: 12px;
+  margin-bottom: 8px;
+}
+
+.qj-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.qj-title {
+  font-family: 'Crimson Text', serif;
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.qj-badge {
+  font-size: 0.7rem;
+  padding: 2px 8px;
+  border-radius: 10px;
+  color: white;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.qj-description {
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  margin-bottom: 6px;
+}
+
+.qj-summary {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  margin-bottom: 6px;
+}
+
+.qj-objectives {
+  margin-top: 6px;
+}
+
+.qj-objective {
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  padding: 2px 0;
+}
+
+.qj-obj-current {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.qj-track-btn {
+  margin-top: 8px;
+  background: var(--accent-indigo);
+  color: white;
+  border: none;
+  padding: 6px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.82rem;
+  transition: background 0.2s;
+}
+
+.qj-track-btn:hover {
+  background: #4f46e5;
+}
+
+/* ============================================
+   QUEST DISCOVERY CARD (inline in game log)
+   ============================================ */
+
+.quest-discovery-card {
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.12), rgba(245, 158, 11, 0.04));
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin: 10px 0;
+  animation: qdc-appear 0.5s ease;
+}
+
+@keyframes qdc-appear {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.qdc-header {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: #f59e0b;
+  margin-bottom: 4px;
+}
+
+.qdc-title {
+  font-family: 'Crimson Text', serif;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+
+.qdc-description {
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  margin-bottom: 8px;
+}
+
+.qdc-track-btn {
+  background: #f59e0b;
+  color: #1a1a2e;
+  border: none;
+  padding: 5px 14px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 600;
+  transition: background 0.2s;
+}
+
+.qdc-track-btn:hover {
+  background: #d97706;
+}
+
+.qdc-track-btn:disabled,
+.qdc-tracked {
+  background: #22c55e;
+  cursor: default;
+  color: white;
+}
+
+/* Quest button pulse notification */
+@keyframes quest-pulse {
+  0%, 100% { box-shadow: none; }
+  50% { box-shadow: 0 0 12px rgba(245, 158, 11, 0.6); }
+}
+
+.quest-notify {
+  animation: quest-pulse 0.5s ease 3;
+}
+

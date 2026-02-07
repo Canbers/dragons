@@ -828,48 +828,6 @@ async function fetchGameInfo(plotId, characterId) {
     }
     
 
-    async function fetchQuestDetails(questId) {
-        try {
-            const response = await fetch(`/api/quest-details?questId=${questId}`);
-            if (response.status === 401) {
-                window.location.href = '/authorize';
-                return;
-            }
-
-            if (!response.ok) {
-                throw new Error('Failed to fetch quest details');
-            }
-            return await response.json();
-        } catch (error) {
-            console.error('Error fetching quest details:', error);
-            return null;
-        }
-    }
-
-    async function setActiveQuest(plotId, questId) {
-        try {
-            const response = await fetch(`/api/plots/${plotId}`, {
-                method: 'PUT',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ activeQuest: questId }),
-            });
-            if (response.status === 401) {
-                window.location.href = '/authorize';
-                return;
-            }
-
-            if (response.ok) {
-                console.log(`Quest ${questId} selected as active`);
-                fetchGameInfo(plotId, characterId);
-            } else {
-                console.error('Failed to set active quest');
-            }
-        } catch (error) {
-            console.error('Error setting active quest:', error);
-        }
-    }
 
     // Existing code for handling player input and displaying responses
     const inputField = document.getElementById('chat-box');
@@ -878,9 +836,126 @@ async function fetchGameInfo(plotId, characterId) {
     const questsModal = document.getElementById('quests-modal');
     const closeModal = document.getElementsByClassName('close')[0];
 
-    // Function to open the modal
-    function openModal() {
+    // Quest journal
+    async function openQuestJournal() {
         questsModal.style.display = 'block';
+        const activeList = document.getElementById('qj-active-list');
+        const leadsList = document.getElementById('qj-leads-list');
+        const completedList = document.getElementById('qj-completed-list');
+        if (activeList) activeList.innerHTML = '<em>Loading...</em>';
+        if (leadsList) leadsList.innerHTML = '';
+        if (completedList) completedList.innerHTML = '';
+
+        try {
+            const token = localStorage.getItem('authToken');
+            const response = await fetch(`/api/plots/${plotId}/quests`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            if (!response.ok) throw new Error('Failed to fetch quests');
+            const quests = await response.json();
+
+            const active = quests.filter(q => q.status === 'active');
+            const leads = quests.filter(q => q.status === 'discovered');
+            const done = quests.filter(q => q.status === 'completed' || q.status === 'failed' || q.status === 'expired');
+
+            activeList.innerHTML = active.length === 0
+                ? '<em>No active quests. Track a lead to begin.</em>'
+                : active.map(q => renderQuestCard(q)).join('');
+
+            leadsList.innerHTML = leads.length === 0
+                ? '<em>No leads discovered yet. Explore the world and talk to people.</em>'
+                : leads.map(q => renderQuestCard(q, true)).join('');
+
+            completedList.innerHTML = done.length === 0
+                ? '<em>No completed quests yet.</em>'
+                : done.map(q => renderQuestCard(q)).join('');
+
+            // Attach track buttons
+            questsModal.querySelectorAll('.qj-track-btn').forEach(btn => {
+                btn.addEventListener('click', async (e) => {
+                    const questId = e.target.dataset.questId;
+                    await trackQuest(questId);
+                    openQuestJournal(); // Refresh
+                });
+            });
+        } catch (error) {
+            console.error('Error loading quest journal:', error);
+            if (activeList) activeList.innerHTML = '<em>Failed to load quests.</em>';
+        }
+    }
+
+    function renderQuestCard(quest, showTrackBtn = false) {
+        const statusColors = {
+            active: '#6366f1', discovered: '#f59e0b', completed: '#22c55e',
+            failed: '#ef4444', expired: '#6b7280'
+        };
+        const statusLabels = {
+            active: 'Active', discovered: 'Lead', completed: 'Completed',
+            failed: 'Failed', expired: 'Expired'
+        };
+        const color = statusColors[quest.status] || '#888';
+
+        let objectivesHtml = '';
+        if (quest.objectives && quest.objectives.length > 0) {
+            const visibleObjs = quest.objectives.filter(o => o.status !== 'unknown');
+            if (visibleObjs.length > 0) {
+                objectivesHtml = '<div class="qj-objectives">' + visibleObjs.map(o => {
+                    const check = o.status === 'completed' ? '&#9745;' : o.status === 'failed' ? '&#9746;' : '&#9744;';
+                    const cls = o.isCurrent ? 'qj-obj-current' : '';
+                    return `<div class="qj-objective ${cls}">${check} ${o.description}</div>`;
+                }).join('') + '</div>';
+            }
+        }
+
+        const summaryHtml = quest.currentSummary
+            ? `<div class="qj-summary"><em>${quest.currentSummary}</em></div>`
+            : '';
+
+        const trackBtn = showTrackBtn
+            ? `<button class="qj-track-btn" data-quest-id="${quest.id}">Track Quest</button>`
+            : '';
+
+        return `
+            <div class="qj-card" style="border-left-color: ${color};">
+                <div class="qj-card-header">
+                    <span class="qj-title">${quest.title}</span>
+                    <span class="qj-badge" style="background: ${color};">${statusLabels[quest.status] || quest.status}</span>
+                </div>
+                <div class="qj-description">${quest.description || ''}</div>
+                ${summaryHtml}
+                ${objectivesHtml}
+                ${trackBtn}
+            </div>
+        `;
+    }
+
+    async function trackQuest(questId) {
+        try {
+            const token = localStorage.getItem('authToken');
+            const response = await fetch(`/api/plots/${plotId}/quests/${questId}/track`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+            if (response.ok) {
+                showToast('Quest tracked!', 'success');
+                pulseQuestButton();
+            } else {
+                const data = await response.json();
+                showToast(data.error || 'Failed to track quest', 'error');
+            }
+        } catch (error) {
+            console.error('Error tracking quest:', error);
+        }
+    }
+
+    function pulseQuestButton() {
+        if (viewQuestsBtn) {
+            viewQuestsBtn.classList.add('quest-notify');
+            setTimeout(() => viewQuestsBtn.classList.remove('quest-notify'), 2000);
+        }
     }
 
     // Function to close the modal
@@ -896,7 +971,7 @@ async function fetchGameInfo(plotId, characterId) {
     }
 
     // Event listeners for opening and closing the modal
-    viewQuestsBtn.addEventListener('click', openModal);
+    viewQuestsBtn.addEventListener('click', openQuestJournal);
     closeModal.addEventListener('click', closeModalFunc);
     window.addEventListener('click', outsideClick);
     window.addEventListener('resize', async () => {
@@ -1018,6 +1093,8 @@ async function fetchGameInfo(plotId, characterId) {
                 let currentSceneEntities = null;
                 let currentDiscoveries = null;
                 let currentSkillCheck = null;
+                let currentQuestUpdates = [];
+                let currentQuestDiscoveries = [];
 
                 // Use streaming endpoint
                 const response = await fetch('/api/input/stream', {
@@ -1146,6 +1223,23 @@ async function fetchGameInfo(plotId, characterId) {
                                     }
                                 }
 
+                                if (data.quest_discovered) {
+                                    console.log('[SSE] Quest discovered:', data.quest_discovered);
+                                    currentQuestDiscoveries = data.quest_discovered;
+                                    pulseQuestButton();
+                                }
+
+                                if (data.quest_update) {
+                                    console.log('[SSE] Quest update:', data.quest_update);
+                                    currentQuestUpdates.push({
+                                        questId: data.quest_update.id,
+                                        title: data.quest_update.title,
+                                        status: data.quest_update.status
+                                    });
+                                    pulseQuestButton();
+                                    showToast(`Quest updated: ${data.quest_update.title}`, 'info');
+                                }
+
                                 if (data.done) {
                                     // Refresh map viewer after action completes
                                     if (window.mapViewer) {
@@ -1224,6 +1318,33 @@ async function fetchGameInfo(plotId, characterId) {
                                         }
                                     }
 
+                                    // Render quest discovery cards inline
+                                    if (currentQuestDiscoveries && currentQuestDiscoveries.length > 0) {
+                                        const systemText = document.querySelector(`#${streamId} .systemText`);
+                                        if (systemText) {
+                                            for (const quest of currentQuestDiscoveries) {
+                                                const qdCard = document.createElement('div');
+                                                qdCard.className = 'quest-discovery-card';
+                                                qdCard.innerHTML = `
+                                                    <div class="qdc-header">New Lead</div>
+                                                    <div class="qdc-title">${quest.title}</div>
+                                                    <div class="qdc-description">${quest.description || ''}</div>
+                                                    <button class="qdc-track-btn" data-quest-id="${quest.id}">Track Quest</button>
+                                                `;
+                                                systemText.insertBefore(qdCard, timestampEl);
+
+                                                qdCard.querySelector('.qdc-track-btn').addEventListener('click', async (e) => {
+                                                    const btn = e.target;
+                                                    const questId = btn.dataset.questId;
+                                                    await trackQuest(questId);
+                                                    btn.textContent = 'Tracking';
+                                                    btn.disabled = true;
+                                                    btn.classList.add('qdc-tracked');
+                                                });
+                                            }
+                                        }
+                                    }
+
                                     // Stream complete
                                     streamCursor.style.display = 'none';
                                     timestampEl.style.display = 'inline';
@@ -1255,6 +1376,14 @@ async function fetchGameInfo(plotId, characterId) {
                 if (currentSceneEntities) aiLogBody.sceneEntities = currentSceneEntities;
                 if (currentDiscoveries && currentDiscoveries.length > 0) aiLogBody.discoveries = currentDiscoveries;
                 if (currentSkillCheck) aiLogBody.skillCheck = currentSkillCheck;
+                if (currentQuestUpdates.length > 0) aiLogBody.questUpdates = currentQuestUpdates;
+                // Include quest discoveries as questUpdates for persistence on reload
+                if (currentQuestDiscoveries.length > 0) {
+                    const discoveryUpdates = currentQuestDiscoveries.map(q => ({
+                        questId: q.id, title: q.title, status: 'discovered'
+                    }));
+                    aiLogBody.questUpdates = [...(aiLogBody.questUpdates || []), ...discoveryUpdates];
+                }
                 await fetch('/api/game-logs', {
                     method: 'POST',
                     headers: headers,
@@ -1303,27 +1432,6 @@ async function fetchGameInfo(plotId, characterId) {
                 }
                 const introData = await introResponse.json();
                 displayWorldAndRegionDetails(introData);
-
-    
-                // Fetch and display quests
-                const questsResponse = await fetch(`/api/initial-quests/${plotId}`);
-                if (!questsResponse.ok) {
-                    throw new Error('Failed to fetch initial quests');
-                }
-                const questsData = await questsResponse.json();
-                const intro = await displayInitialQuests(questsData);  // Ensure passing the correct part of the response
-                // save quests intro into game log
-                const token = localStorage.getItem('authToken');
-                const headers = {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`
-                };
-                await fetch('/api/game-logs', {
-                    method: 'POST',
-                    headers: headers,
-                    body: JSON.stringify({ plotId, author: 'AI', content: intro })
-                });
-    
                 return;
             }
             if (!response.ok) {
@@ -1360,45 +1468,6 @@ async function fetchGameInfo(plotId, characterId) {
         gameLog.innerHTML += worldDetails;
         gameLog.scrollTop = gameLog.scrollHeight;
     }
-    
-    function displayInitialQuests(quests) {
-        if (!Array.isArray(quests) || quests.length === 0) {
-            console.error('Invalid quests data:', quests);
-            return;
-        }
-    
-        const gameLog = document.getElementById('game-log');
-        
-        // Just mention that there are things happening - don't dump all quest details
-        let questsMessage = `
-            <div class="message ai">
-                <div class="systemText">
-                    As you take in your surroundings, you notice the locals seem preoccupied. Snippets of conversation drift past:<br><br>`;
-        
-        // Just show quest titles as hooks, not full descriptions
-        quests.forEach((quest, index) => {
-            questsMessage += `<em>"...something about ${quest.questTitle.toLowerCase()}..."</em><br>`;
-        });
-    
-        questsMessage += `<br>
-                    The details are unclear from here. Perhaps talking to the townspeople would reveal more.<br><br>
-                    <strong>The world awaits. What do you do?</strong>
-                    <span class="timestamp">${new Date().toLocaleTimeString()}</span>
-                </div>
-            </div>
-        `;
-    
-        gameLog.innerHTML += questsMessage;
-        gameLog.scrollTop = gameLog.scrollHeight;
-    
-        // Return a concise version for the game log
-        let returnMessage = `You notice the locals seem preoccupied. Snippets of conversation mention: `;
-        returnMessage += quests.map(q => q.questTitle.toLowerCase()).join(', ');
-        returnMessage += `. The details are unclear — perhaps talking to the townspeople would reveal more.`;
-    
-        return returnMessage;
-    }
-    
     
 
     async function fetchGameLogById(gameLogId) {
@@ -1473,6 +1542,18 @@ async function fetchGameInfo(plotId, characterId) {
             // Append discovery cards if present
             if (message.discoveries && message.discoveries.length > 0) {
                 contentHtml += NarrativeFormatter.renderDiscoveryCards(message.discoveries);
+            }
+            // Append quest discovery cards if present
+            if (message.questUpdates && message.questUpdates.length > 0) {
+                const discoveries = message.questUpdates.filter(q => q.status === 'discovered');
+                if (discoveries.length > 0) {
+                    contentHtml += discoveries.map(q => `
+                        <div class="quest-discovery-card">
+                            <div class="qdc-header">New Lead</div>
+                            <div class="qdc-title">${q.title}</div>
+                        </div>
+                    `).join('');
+                }
             }
         } else {
             contentHtml = message.content;
