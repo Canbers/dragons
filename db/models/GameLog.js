@@ -35,7 +35,12 @@ const MessageSchema = new Schema({
         minPass: Number,
         strongPass: Number,
         result: String
-    }
+    },
+    questUpdates: [{
+        questId: String,
+        title: String,
+        status: String
+    }]
 });
 
 const GameLogSchema = new Schema({

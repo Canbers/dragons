@@ -107,7 +107,7 @@
         <!-- Game Buttons -->
         <div id="game-buttons">
             <button id="start-game-btn">▶️ Start</button>
-            <button id="view-quests-btn">📜 Quests</button>
+            <button id="view-quests-btn">📜 Journal</button>
             <button id="reputation-btn">🤝 Rep</button>
             <button id="story-summary-btn">📖 Story</button>
             <button id="settings-btn">⚙️</button>
@@ -143,13 +143,24 @@
     </div>
 </div>
 
-<!-- Quests Modal -->
+<!-- Quest Journal Modal -->
 <div id="quests-modal" class="modal" style="display: none;">
-    <div class="modal-content">
+    <div class="modal-content quest-journal">
         <span class="close" id="close-quests-modal">&times;</span>
-        <h3>📜 Quests</h3>
-        <div id="quests-table-container">
-            <!-- Quests table will be populated here -->
+        <h3>Quest Journal</h3>
+        <div id="quest-journal-content">
+            <div class="qj-section" id="qj-active">
+                <h4>Active Quests</h4>
+                <div class="qj-list" id="qj-active-list"></div>
+            </div>
+            <div class="qj-section" id="qj-leads">
+                <h4>Leads</h4>
+                <div class="qj-list" id="qj-leads-list"></div>
+            </div>
+            <div class="qj-section" id="qj-completed">
+                <h4>Completed</h4>
+                <div class="qj-list" id="qj-completed-list"></div>
+            </div>
         </div>
     </div>
 </div>

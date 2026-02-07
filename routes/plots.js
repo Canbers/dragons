@@ -10,7 +10,8 @@ const Settlement = require('../db/models/Settlement.js');
 const Poi = require('../db/models/Poi.js');
 const GameLog = require('../db/models/GameLog.js');
 const { summarizeLogs, simplePrompt } = require('../services/gptService');
-const { getWorldAndRegionDetails, getInitialQuests } = require('../agents/world/storyTeller.js');
+const { getWorldAndRegionDetails } = require('../agents/world/storyTeller.js');
+const questService = require('../services/questService');
 const movementService = require('../services/movementService');
 const regionFactory = require('../agents/world/factories/regionsFactory.js');
 const settlementsFactory = require('../agents/world/factories/settlementsFactory.js');
@@ -24,20 +25,6 @@ router.get('/world-and-region/:plotId', ensureAuthenticated, async (req, res) =>
         }
         const data = await getWorldAndRegionDetails(plotId);
         res.json(data);
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// Fetch initial quests
-router.get('/initial-quests/:plotId', ensureAuthenticated, async (req, res) => {
-    try {
-        const plotId = req.params.plotId;
-        if (!mongoose.Types.ObjectId.isValid(plotId)) {
-            return res.status(400).send('Invalid plotId format');
-        }
-        const quests = await getInitialQuests(plotId);
-        res.json(quests);
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
@@ -310,13 +297,9 @@ router.post('/plot/:plotId/initialize', ensureAuthenticated, async (req, res) =>
             res.end();
 
             // Fire-and-forget background tasks — don't block the player
-            // 1. Describe remaining settlements in the region
+            // Describe remaining settlements in the region
             regionFactory.describeSettlements(regionId).catch(err => {
                 console.error('[Init] Background settlement description failed:', err.message);
-            });
-            // 2. Generate initial quests
-            getInitialQuests(plot._id).catch(err => {
-                console.error('[Init] Background quest generation failed:', err.message);
             });
 
         } catch (initError) {
@@ -421,6 +404,31 @@ router.get('/plots/:plotId/scene-context', ensureAuthenticated, async (req, res)
             return res.status(404).json({ error: 'Plot not found' });
         }
         res.json(plot.current_state?.sceneContext || {});
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Get quest journal (player-visible quests)
+router.get('/plots/:plotId/quests', ensureAuthenticated, async (req, res) => {
+    const { plotId } = req.params;
+    try {
+        const quests = await questService.getJournalQuests(plotId);
+        res.json(quests);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Track a discovered quest (player activates it)
+router.post('/plots/:plotId/quests/:questId/track', ensureAuthenticated, async (req, res) => {
+    const { plotId, questId } = req.params;
+    try {
+        const result = await questService.activateQuest(plotId, questId);
+        if (!result.success) {
+            return res.status(400).json(result);
+        }
+        res.json(result);
     } catch (error) {
         res.status(500).json({ error: error.message });
     }

@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const Schema = mongoose.Schema;
+
 const Quest = new Schema(
     {
         world: {
@@ -7,29 +8,48 @@ const Quest = new Schema(
             ref: 'World',
             required: true
         },
+        settlement: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'Settlement'
+        },
         questTitle: {
             type: String,
         },
         description: {
             type: String
         },
-        objectives: {
-            type: Array
-        },
-        currentObjective: {
-            type: String
-        },
         status: {
             type: String,
-            enum: ['Not started', 'Active - In progress', 'Not Active - In progress', 'Completed'],
-            default: 'Not started',
+            enum: ['seed', 'discovered', 'active', 'completed', 'failed', 'expired'],
+            default: 'seed',
         },
-        triggers: {
-            conditions: [
-                {
-                    type: String
-                }
-            ]
+        objectives: [{
+            id: { type: String },
+            description: { type: String },
+            status: {
+                type: String,
+                enum: ['unknown', 'known', 'in_progress', 'completed', 'failed'],
+                default: 'unknown'
+            },
+            isCurrent: { type: Boolean, default: false }
+        }],
+        hooks: [{
+            text: { type: String },
+            type: {
+                type: String,
+                enum: ['rumor', 'observation', 'npc_mention', 'environmental'],
+                default: 'rumor'
+            },
+            delivered: { type: Boolean, default: false },
+            deliveredAt: { type: Date }
+        }],
+        progression: [{
+            summary: { type: String },
+            timestamp: { type: Date, default: Date.now }
+        }],
+        currentSummary: {
+            type: String,
+            default: ''
         },
         keyActors: {
             primary: [
@@ -71,7 +91,8 @@ const Quest = new Schema(
             immediate: { type: String },
             longTerm: { type: String }
         }
-    }
+    },
+    { timestamps: true }
 );
 
 module.exports = mongoose.model('Quest', Quest);

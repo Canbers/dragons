@@ -125,6 +125,11 @@ const Plot = new Schema(
             mood_tone: {
                 type: String, // e.g., "tense", "relaxed"
             },
+            questState: {
+                lastSeedGeneration: { type: Date },
+                seedSettlement: { type: mongoose.Schema.Types.ObjectId, ref: 'Settlement' },
+                turnsSinceLastHook: { type: Number, default: 0 }
+            },
             sceneContext: {
                 summary: { type: String, default: '' },
                 tension: {
@@ -163,7 +168,9 @@ const Plot = new Schema(
                     type: String,
                 },
                 questStatus: {
-                    type: String
+                    type: String,
+                    enum: ['seed', 'discovered', 'active', 'completed', 'failed', 'expired'],
+                    default: 'seed'
                 },
                 notes: {
                     type: Array

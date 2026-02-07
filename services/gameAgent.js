@@ -14,6 +14,7 @@ const Poi = require('../db/models/Poi');
 const GameLog = require('../db/models/GameLog');
 const { openai, buildSystemPrompt, GAME_MODEL, simplePrompt } = require('./gptService');
 const settlementsFactory = require('../agents/world/factories/settlementsFactory');
+const questService = require('./questService');
 
 // ============ TOOL DEFINITIONS ============
 
@@ -87,6 +88,26 @@ const TOOLS = [
                     type: { type: "string", enum: ["physical", "social", "mental", "survival"] }
                 },
                 required: ["action", "difficulty", "type"]
+            }
+        }
+    },
+    {
+        type: "function",
+        function: {
+            name: "update_quest",
+            description: "Update quest progress when the player completes an objective, learns critical info, or a quest resolves. Only use for quests the player is actively tracking.",
+            parameters: {
+                type: "object",
+                properties: {
+                    quest_title: { type: "string", description: "Title of the quest to update" },
+                    update_type: {
+                        type: "string",
+                        enum: ["objective_complete", "new_info", "quest_complete", "quest_failed"],
+                        description: "Type of update"
+                    },
+                    summary: { type: "string", description: "Brief description of what just happened" }
+                },
+                required: ["quest_title", "update_type", "summary"]
             }
         }
     }
@@ -355,6 +376,10 @@ function executeSkillCheck(action, difficulty, type) {
     return { action, type, difficulty, roll, minPass: t.minPass, strongPass: t.strongPass, result };
 }
 
+async function executeUpdateQuest(plotId, questTitle, updateType, summary) {
+    return await questService.updateQuestProgress(plotId, questTitle, updateType, summary);
+}
+
 async function executeTool(plotId, toolName, args) {
     switch (toolName) {
         case 'get_scene': return await executeGetScene(plotId);
@@ -362,6 +387,7 @@ async function executeTool(plotId, toolName, args) {
         case 'move_player': return await executeMovePlayer(plotId, args.destination);
         case 'update_npc_relationship': return await executeUpdateRelationship(plotId, args.npc_name, args.new_disposition, args.reason);
         case 'skill_check': return executeSkillCheck(args.action, args.difficulty, args.type);
+        case 'update_quest': return await executeUpdateQuest(plotId, args.quest_title, args.update_type, args.summary);
         default: return { error: `Unknown tool: ${toolName}` };
     }
 }
@@ -375,6 +401,7 @@ function getToolDisplay(toolName, args) {
         case 'move_player': return `Moving to ${args.destination || 'location'}...`;
         case 'update_npc_relationship': return `Noting reaction from ${args.npc_name || 'NPC'}...`;
         case 'skill_check': return `Rolling for ${args.type || 'skill'} check...`;
+        case 'update_quest': return `Updating quest progress...`;
         default: return 'Thinking...';
     }
 }
@@ -432,6 +459,10 @@ function formatToolResult(toolName, result) {
             } else {
                 return `SKILL CHECK PASSED (${result.type}, ${result.difficulty}: rolled ${result.roll}, needed ${result.minPass}). The action "${result.action}" succeeds adequately. Nothing remarkable, just competent execution.`;
             }
+
+        case 'update_quest':
+            if (!result.success) return `QUEST UPDATE FAILED: ${result.error}`;
+            return `QUEST UPDATED: "${result.quest.title}" — ${result.quest.updateType}. Status: ${result.quest.status}`;
 
         default:
             return JSON.stringify(result);
@@ -718,6 +749,7 @@ RULES:
 - Call move_player ONLY for explicit movement to a different named location
 - Call update_npc_relationship ONLY after a significant attitude-changing interaction
 - Call skill_check when the player attempts something with uncertain outcome: persuasion, physical feats, sneaking, picking locks, climbing, deception, intimidation, haggling, crafting. Do NOT call for trivial actions (looking around, basic conversation, simple movement, opening unlocked doors).
+- Call update_quest when the player makes meaningful progress on a tracked quest (completing an objective, discovering critical info, or resolving the quest). Do NOT call for trivial interactions.
 - You can call multiple tools
 - For simple actions in the current location, get_scene alone is enough
 
@@ -764,6 +796,7 @@ ${historyContext}`
     const rawToolResults = [];
     let movementNarration = null;
     let skillCheckData = null;
+    let questUpdateData = null;
 
     for (const tc of toolCalls) {
         const toolName = tc.function.name;
@@ -791,6 +824,8 @@ ${historyContext}`
             yield { type: 'debug', category: 'roll', message: `🎲 d20=${result.roll} (${result.difficulty} ${result.type}) → ${result.result}`, detail: `"${result.action}" | need ${result.minPass} to pass, ${result.strongPass} for crit | ${toolMs}ms` };
         } else if (toolName === 'update_npc_relationship') {
             yield { type: 'debug', category: 'db', message: `update_npc → ${args.npc_name} = ${args.new_disposition}`, detail: `Reason: ${args.reason} | ${toolMs}ms` };
+        } else if (toolName === 'update_quest') {
+            yield { type: 'debug', category: 'db', message: `update_quest → "${args.quest_title}" (${args.update_type})`, detail: `${args.summary} | ${toolMs}ms` };
         }
 
         // If movement happened, capture the narration
@@ -802,6 +837,12 @@ ${historyContext}`
         if (toolName === 'skill_check') {
             skillCheckData = result;
             yield { type: 'skill_check', data: result };
+        }
+
+        // If quest update, emit SSE event
+        if (toolName === 'update_quest' && result.success) {
+            questUpdateData = result.quest;
+            yield { type: 'quest_update', data: result.quest };
         }
     }
 
@@ -886,7 +927,12 @@ ${historyContext}`
         if (sc.playerGoal) parts.push(`Player goal: ${sc.playerGoal}`);
         sceneContextBlock = `\nSCENE CONTEXT (from previous turns):\n${parts.join('\n')}\n\nIMPORTANT: Respect NPC states and attitudes from scene context. A terrified NPC stays terrified. A fleeing NPC is gone. Tension level affects how NPCs react. If conversation history shows the player LEFT a location, NPCs from that area are gone even if scene data still lists them.\n`;
     }
-    const fullContext = sceneContextBlock + enrichedContext;
+    // Inject quest context
+    const questContext = await questService.getQuestContext(plotId);
+    const fullContext = sceneContextBlock + enrichedContext + questContext;
+
+    // Get optional quest hook for narrator
+    const questHook = await questService.getHooksForNarrative(plotId);
 
     const narrativeSystemPrompt = `${buildSystemPrompt(tone, difficulty)}
 
@@ -897,14 +943,18 @@ RESPONSE RULES:
 - Keep conversation continuity — if a conversation is in progress, continue it naturally.
 - If the player both acts AND speaks, handle both in one response.
 - Respect the POPULATION level in the scene data. In isolated/sparse areas, do NOT invent NPCs. In populated/crowded areas, ambient NPCs fitting the location are natural.
-- If the player has left an area (per conversation history), NPCs from that area are gone. Do not let the player interact with them.`;
+- If the player has left an area (per conversation history), NPCs from that area are gone. Do not let the player interact with them.
+- If quest context is provided, reference active quests naturally when relevant. Don't force quest references if the scene doesn't call for it.
+- If you use the update_quest tool, the quest progress is tracked automatically. Only call it for meaningful progress, not every minor interaction.`;
+
+    let userPromptContent = `GAME STATE:\n${fullContext}\n\nRECENT CONVERSATION:\n${historyContext}\n\nPLAYER: "${input}"\n\nRespond to the player's action/words. Be direct and concise.`;
+    if (questHook) {
+        userPromptContent += `\n\nBACKGROUND DETAIL (weave naturally IF it fits — skip if scene is tense/urgent): ${questHook}`;
+    }
 
     const narrativeMessages = [
         { role: "system", content: narrativeSystemPrompt },
-        {
-            role: "user",
-            content: `GAME STATE:\n${fullContext}\n\nRECENT CONVERSATION:\n${historyContext}\n\nPLAYER: "${input}"\n\nRespond to the player's action/words. Be direct and concise.`
-        }
+        { role: "user", content: userPromptContent }
     ];
 
     yield { type: 'debug', category: 'ai', message: `Narrative streaming → ${GAME_MODEL}`, detail: `Context: ${enrichedContext.length} chars from tool results` };
@@ -969,12 +1019,25 @@ RESPONSE RULES:
         // It'll be ready in the DB for the next turn's context.
         updateSceneContextBackground(plotId, plot.current_state?.sceneContext || {}, enrichedContext, input, fullResponse);
 
-        // ---- Discovery parsing + suggestion generation in parallel ----
+        // ---- Fire-and-forget: quest seed generation ----
+        questService.shouldGenerateSeeds(plotId).then(should => {
+            if (should) questService.generateQuestSeeds(plotId).catch(err =>
+                console.error('[Quest] Seed gen failed:', err.message));
+        });
+
+        // ---- Fire-and-forget: expire stale quests on movement ----
+        if (didMove) {
+            questService.expireStaleQuests(plotId).catch(err =>
+                console.error('[Quest] Expiration failed:', err.message));
+        }
+
+        // ---- Discovery parsing + suggestion generation + quest discovery in parallel ----
         yield { type: 'debug', category: 'ai', message: `Generating suggested actions → ${GAME_MODEL}` };
 
-        const [discoveryResult, suggestionsResult] = await Promise.all([
+        const [discoveryResult, suggestionsResult, questDiscovery] = await Promise.all([
             runDiscoveryParsing(plotId, fullResponse, input, featureTypes),
-            generateCategorizedSuggestions(enrichedContext, input, fullResponse)
+            generateCategorizedSuggestions(enrichedContext, input, fullResponse),
+            questService.detectQuestDiscovery(plotId, fullResponse)
         ]);
 
         // Yield discovery events
@@ -995,6 +1058,17 @@ RESPONSE RULES:
                 yield { type: 'suggested_actions', actions: suggestionsResult.flatActions };
             }
             console.log(`[GameAgent] Suggestions yielded (${Date.now() - startTime}ms)`);
+        }
+
+        // Yield quest discovery events
+        if (questDiscovery && questDiscovery.length > 0) {
+            yield { type: 'debug', category: 'db', message: `Quest discoveries: ${questDiscovery.length}`, detail: questDiscovery.map(q => q.title).join(', ') };
+            yield { type: 'quest_discovered', quests: questDiscovery };
+        }
+
+        // Yield quest update event (if AI used update_quest tool)
+        if (questUpdateData) {
+            yield { type: 'quest_update', data: questUpdateData };
         }
 
     } catch (error) {
