@@ -412,6 +412,20 @@ router.get('/plots/:plotId/settings', ensureAuthenticated, async (req, res) => {
     }
 });
 
+// Get scene context
+router.get('/plots/:plotId/scene-context', ensureAuthenticated, async (req, res) => {
+    const { plotId } = req.params;
+    try {
+        const plot = await Plot.findById(plotId);
+        if (!plot) {
+            return res.status(404).json({ error: 'Plot not found' });
+        }
+        res.json(plot.current_state?.sceneContext || {});
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // Get plot reputation
 router.get('/plots/:plotId/reputation', ensureAuthenticated, async (req, res) => {
     const { plotId } = req.params;

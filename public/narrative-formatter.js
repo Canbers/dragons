@@ -25,6 +25,10 @@ window.NarrativeFormatter = (function () {
         // Escape HTML
         let html = escapeHtml(text);
 
+        // Markdown emphasis: **bold** then *italic* (bold first to avoid conflict)
+        html = html.replace(/\*\*(.+?)\*\*/g, '<strong class="nf-bold">$1</strong>');
+        html = html.replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, '<em class="nf-emphasis">$1</em>');
+
         // Detect dialogue: NpcName: "words" or NpcName: "words"
         // Handles multi-sentence dialogue within quotes
         html = html.replace(
@@ -77,8 +81,17 @@ window.NarrativeFormatter = (function () {
             }
         }
 
-        // Convert line breaks
-        html = html.replace(/\n/g, '<br>');
+        // Convert to paragraphs: double newlines → <p> tags, single newlines → <br>
+        const paragraphs = html.split(/\n\n+/);
+        if (paragraphs.length > 1) {
+            html = paragraphs
+                .map(p => p.trim())
+                .filter(p => p.length > 0)
+                .map(p => `<p class="nf-paragraph">${p.replace(/\n/g, '<br>')}</p>`)
+                .join('');
+        } else {
+            html = html.replace(/\n/g, '<br>');
+        }
 
         return html;
     }

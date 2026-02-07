@@ -239,6 +239,7 @@ Respond with a JSON object containing a "locations" array:
       "type": "market",
       "shortDescription": "Bustling trading hub",
       "description": "A wide cobblestone plaza ringed with merchant stalls.",
+      "populationLevel": "crowded",
       "connections": [
         {"locationName": "The Cinder Gate", "direction": "southeast", "distance": "adjacent"},
         {"locationName": "The Rusty Flagon", "direction": "north", "distance": "adjacent"},
@@ -249,7 +250,8 @@ Respond with a JSON object containing a "locations" array:
 }
 
 Types: gate, market, tavern, temple, plaza, shop, residence, landmark, dungeon, district, docks, barracks, palace, other
-Distances: adjacent (nearby), close (short walk), far (across settlement)`;
+Distances: adjacent (nearby), close (short walk), far (across settlement)
+Population levels: crowded (many people — markets, festivals), populated (staff and regulars — taverns, shops), sparse (few people — alleys, warehouses), isolated (empty — ruins, caves)`;
 
     let retries = 5;
     while (retries > 0) {
@@ -293,6 +295,7 @@ Distances: adjacent (nearby), close (short walk), far (across settlement)`;
             const processedLocations = locations.map((loc, index) => ({
                 name: loc.name,
                 type: loc.type || 'other',
+                populationLevel: ['crowded', 'populated', 'sparse', 'isolated'].includes(loc.populationLevel) ? loc.populationLevel : null,
                 description: loc.description || '',
                 shortDescription: loc.shortDescription || '',
                 coordinates: {
@@ -499,7 +502,8 @@ const addPoi = async (settlementId, locationName, poiData) => {
         if (poiData.type) existing.type = poiData.type;
         if (poiData.metadata) existing.metadata = { ...existing.metadata, ...poiData.metadata };
         existing.interactionCount = (existing.interactionCount || 0) + 1;
-        existing.discovered = true;
+        // Only mark discovered if explicitly requested (e.g., from discovery service)
+        if (poiData.discovered === true) existing.discovered = true;
         // If NPC has moved to a new location, update their location
         if (existing.locationId.toString() !== location._id.toString()) {
             console.log(`[POI] ${existing.name} moved from ${existing.locationName} to ${locationName}`);
@@ -520,7 +524,7 @@ const addPoi = async (settlementId, locationName, poiData) => {
         disposition: poiData.disposition || '',
         icon: poiData.icon || '',
         persistent: poiData.persistent !== false,
-        discovered: true,
+        discovered: poiData.discovered === true,  // default false; only true when explicitly set
         interactionCount: 1,
         metadata: poiData.metadata || {},
         settlement: settlementId,

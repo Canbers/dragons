@@ -270,64 +270,207 @@
   font-family: inherit;
 }
 
-/* Scene View (POI List) */
+/* ============ Scene View ============ */
+
+/* CSS Variables for scene theming */
+:root {
+  --tension-calm: #4CAF50;
+  --tension-cautious: #cddc39;
+  --tension-tense: #ff9800;
+  --tension-hostile: #f44336;
+  --tension-critical: #d50000;
+  --att-friendly: #4CAF50;
+  --att-neutral: #888;
+  --att-wary: #cddc39;
+  --att-hostile: #f44336;
+  --att-terrified: #42a5f5;
+  --scene-border: #1a2e3e;
+  --scene-bg: #16213e;
+  --scene-bg-dark: #0d1117;
+  --scene-accent: #e94560;
+}
+
 .scene-view {
   width: 100%;
   max-width: 600px;
   color: #fff;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
 }
 
-.scene-view h3 {
+/* Tension Bar — thin colored strip at top */
+.scene-tension-bar {
+  height: 4px;
+  width: 100%;
+  border-radius: 2px;
+  margin-bottom: 12px;
+  transition: background-color 0.5s ease;
+}
+
+.scene-tension--calm { background-color: var(--tension-calm); }
+.scene-tension--cautious { background-color: var(--tension-cautious); }
+.scene-tension--tense { background-color: var(--tension-tense); }
+.scene-tension--hostile { background-color: var(--tension-hostile); }
+.scene-tension--critical {
+  background-color: var(--tension-critical);
+  animation: tension-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes tension-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* Header */
+.scene-view .scene-header h3 {
   text-align: center;
-  margin-bottom: 20px;
-  color: #e94560;
+  margin: 0 0 8px 0;
+  color: var(--scene-accent);
+  font-size: 1.1rem;
 }
 
-.poi-list {
-  display: grid;
-  gap: 12px;
+/* Summary — italic, serif-style */
+.scene-summary {
+  font-style: italic;
+  color: #bbb;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  text-align: center;
+  margin: 0 0 8px 0;
+  padding: 0 8px;
 }
 
-.poi-card {
-  background: #16213e;
-  padding: 15px;
-  border-radius: 8px;
-  border: 2px solid #0f3460;
+/* Player goal */
+.scene-goal {
+  text-align: center;
+  font-size: 0.75rem;
+  color: #777;
+  margin-bottom: 12px;
+  padding: 0 8px;
+}
+
+/* Section containers */
+.scene-section {
+  padding: 8px 0;
+  border-top: 1px solid var(--scene-border);
+}
+
+.scene-section-label {
+  display: block;
+  font-size: 0.6rem;
+  font-weight: 700;
+  color: #666;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 6px;
+}
+
+/* Event tags — indigo pill badges */
+.scene-event-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.scene-event-tag {
+  display: inline-block;
+  padding: 3px 10px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  background: rgba(99, 102, 241, 0.2);
+  color: #818cf8;
+  border: 1px solid rgba(99, 102, 241, 0.4);
+  border-radius: 12px;
+}
+
+/* NPC Cards */
+.scene-npc-card {
+  background: var(--scene-bg);
+  border: 1px solid var(--scene-border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin-bottom: 6px;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: border-color 0.2s, transform 0.15s;
 }
 
-.poi-card:hover {
-  border-color: #e94560;
-  transform: translateX(4px);
+.scene-npc-card:hover {
+  border-color: #d4af37;
+  transform: translateX(3px);
 }
 
-.poi-header {
+.scene-npc-header {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-bottom: 8px;
+  gap: 8px;
 }
 
-.poi-icon {
-  font-size: 24px;
+.scene-npc-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
 }
 
-.poi-header h4 {
+.scene-att--friendly { background-color: var(--att-friendly); }
+.scene-att--neutral { background-color: var(--att-neutral); }
+.scene-att--wary { background-color: var(--att-wary); }
+.scene-att--hostile { background-color: var(--att-hostile); }
+.scene-att--terrified { background-color: var(--att-terrified); }
+
+.scene-npc-name {
+  color: #d4af37;
+  font-weight: 600;
+  font-size: 0.85rem;
+  flex: 1;
+}
+
+.scene-npc-attitude {
+  font-size: 0.65rem;
+  color: #888;
+  text-transform: lowercase;
+}
+
+.scene-npc-intent {
+  font-size: 0.7rem;
+  color: #999;
+  margin-top: 4px;
+  padding-left: 16px;
+  font-style: italic;
+}
+
+/* Exit chips — distinct blue */
+.scene-chip--exit {
+  border-color: rgba(56, 189, 248, 0.5) !important;
+  color: #38bdf8 !important;
+}
+
+.scene-chip--exit:hover {
+  background: rgba(56, 189, 248, 0.15) !important;
+  border-color: #38bdf8 !important;
+}
+
+/* Recent outcomes list */
+.scene-outcomes-list {
+  list-style: none;
+  padding: 0;
   margin: 0;
-  color: #fff;
 }
 
-.poi-description {
-  font-size: 13px;
-  color: #ccc;
-  margin: 8px 0;
+.scene-outcomes-list li {
+  font-size: 0.7rem;
+  color: #999;
+  padding: 2px 0 2px 12px;
+  position: relative;
 }
 
-.poi-meta {
-  font-size: 11px;
+.scene-outcomes-list li::before {
+  content: '>';
+  position: absolute;
+  left: 0;
   color: #666;
-  margin-top: 8px;
+  font-weight: bold;
 }
 
 /* Scene Live Entities — clickable chips from SSE data */

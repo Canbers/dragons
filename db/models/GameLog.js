@@ -26,7 +26,16 @@ const MessageSchema = new Schema({
         name: String,
         type: String,
         description: String
-    }]
+    }],
+    skillCheck: {
+        action: String,
+        type: String,
+        difficulty: String,
+        roll: Number,
+        minPass: Number,
+        strongPass: Number,
+        result: String
+    }
 });
 
 const GameLogSchema = new Schema({

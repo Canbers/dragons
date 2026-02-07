@@ -102,7 +102,8 @@ IMPORTANT: Only include things with PROPER NAMES. Skip generic descriptions like
                         type: 'npc',
                         description: npc.description || '',
                         disposition: npc.disposition || '',
-                        persistent: true
+                        persistent: true,
+                        discovered: true  // Mentioned in narrative = discovered
                     }
                 );
 
@@ -127,7 +128,8 @@ IMPORTANT: Only include things with PROPER NAMES. Skip generic descriptions like
                         name: obj.name,
                         type: 'object',
                         description: obj.description || '',
-                        persistent: true
+                        persistent: true,
+                        discovered: true  // Mentioned in narrative = discovered
                     }
                 );
 

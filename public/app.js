@@ -187,8 +187,40 @@ async function waitForInitialization(initPlotId) {
     });
 }
 
+// ========== GAME CONSOLE ==========
+function appendConsoleEntry(debug) {
+    const log = document.getElementById('game-console-log');
+    if (!log) return;
+    const entry = document.createElement('div');
+    entry.className = `gc-entry gc-${debug.category || 'system'}`;
+    const time = new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const tag = (debug.category || 'sys').toUpperCase().padEnd(4).substring(0, 4);
+    entry.innerHTML = `<span class="gc-time">${time}</span> <span class="gc-tag">[${tag}]</span> ${debug.message}${debug.detail ? `<span class="gc-detail"> — ${debug.detail}</span>` : ''}`;
+    log.appendChild(entry);
+    log.scrollTop = log.scrollHeight;
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
     setupAuthUI();
+
+    // Console toggle
+    const consoleToggle = document.getElementById('console-toggle');
+    const gameConsole = document.getElementById('game-console');
+    const consoleClear = document.getElementById('console-clear');
+    if (consoleToggle && gameConsole) {
+        consoleToggle.addEventListener('click', () => {
+            const visible = gameConsole.style.display !== 'none';
+            gameConsole.style.display = visible ? 'none' : 'flex';
+            consoleToggle.classList.toggle('gc-active', !visible);
+        });
+    }
+    if (consoleClear) {
+        consoleClear.addEventListener('click', () => {
+            const log = document.getElementById('game-console-log');
+            if (log) log.innerHTML = '';
+        });
+    }
+
     const urlParams = new URLSearchParams(window.location.search);
     plotId = urlParams.get('plotId'); // Assign to global plotId
     const characterId = urlParams.get('characterId');
@@ -962,14 +994,15 @@ async function fetchGameInfo(plotId, characterId) {
                 handlePlayerInput(inputText); // Display player input
                 inputField.value = ''; // Clear input field immediately
                 
-                // Create streaming response container
+                // Create streaming response container (narrating indicator, not raw text)
                 const gameLog = document.getElementById('game-log');
                 const streamId = 'stream-' + Date.now();
                 const timestamp = new Date().toLocaleTimeString();
                 gameLog.innerHTML += `
                     <div id="${streamId}" class="message ai streaming">
                         <div class="systemText">
-                            <span class="stream-content"></span>
+                            <span class="stream-narrating">The story unfolds...</span>
+                            <span class="stream-content" style="display:none;"></span>
                             <span class="stream-cursor">▌</span>
                             <span class="timestamp" style="display:none;">${timestamp}</span>
                         </div>
@@ -984,6 +1017,7 @@ async function fetchGameInfo(plotId, characterId) {
                 let fullMessage = '';
                 let currentSceneEntities = null;
                 let currentDiscoveries = null;
+                let currentSkillCheck = null;
 
                 // Use streaming endpoint
                 const response = await fetch('/api/input/stream', {
@@ -1033,6 +1067,49 @@ async function fetchGameInfo(plotId, characterId) {
                                     gameLog.scrollTop = gameLog.scrollHeight;
                                 }
 
+                                if (data.skill_check) {
+                                    currentSkillCheck = data.skill_check;
+                                    const sc = data.skill_check;
+                                    const resultLabels = { fail: 'Failed', pass: 'Passed', strong_success: 'Critical!' };
+                                    const typeLabels = { physical: 'Physical', social: 'Social', mental: 'Mental', survival: 'Survival' };
+
+                                    // Remove tool status
+                                    const toolStatus = document.querySelector(`#${streamId} .tool-status`);
+                                    if (toolStatus) toolStatus.remove();
+
+                                    // Insert dice roll element before the stream-narrating indicator
+                                    const systemText = document.querySelector(`#${streamId} .systemText`);
+                                    const narratingEl = document.querySelector(`#${streamId} .stream-narrating`);
+                                    const diceEl = document.createElement('div');
+                                    diceEl.className = `dr-container dr-container--${sc.result}`;
+                                    diceEl.innerHTML = `
+                                        <div class="dr-die dr-rolling">🎲</div>
+                                        <div class="dr-value">${sc.roll}</div>
+                                        <div class="dr-info">
+                                            <span class="dr-type">${typeLabels[sc.type] || sc.type} Check — ${sc.difficulty}</span>
+                                            <span class="dr-action">${sc.action}</span>
+                                        </div>
+                                        <span class="dr-result">${resultLabels[sc.result] || sc.result}</span>
+                                    `;
+                                    systemText.insertBefore(diceEl, narratingEl);
+                                    gameLog.scrollTop = gameLog.scrollHeight;
+
+                                    // After 2s, reveal the result (stop tumble, show value/info/result)
+                                    setTimeout(() => {
+                                        diceEl.classList.add('dr-revealed');
+                                    }, 2000);
+                                }
+
+                                if (data.debug) {
+                                    appendConsoleEntry(data.debug);
+                                }
+
+                                if (data.scene_context) {
+                                    if (window.mapViewer) {
+                                        window.mapViewer.updateSceneContext(data.scene_context);
+                                    }
+                                }
+
                                 if (data.scene_entities) {
                                     currentSceneEntities = data.scene_entities;
                                     if (window.mapViewer) {
@@ -1045,9 +1122,8 @@ async function fetchGameInfo(plotId, characterId) {
                                     const toolStatus = document.querySelector(`#${streamId} .tool-status`);
                                     if (toolStatus) toolStatus.remove();
 
+                                    // Accumulate text but don't show raw — will format on completion
                                     fullMessage += data.chunk;
-                                    streamContainer.textContent = fullMessage;
-                                    gameLog.scrollTop = gameLog.scrollHeight;
                                 }
 
                                 if (data.discoveries) {
@@ -1074,7 +1150,46 @@ async function fetchGameInfo(plotId, characterId) {
                                     // Refresh map viewer after action completes
                                     if (window.mapViewer) {
                                         await window.mapViewer.refresh();
+
+                                        // Poll for background scene context update
+                                        // (scene context GPT call runs fire-and-forget on the server
+                                        //  to avoid blocking the response; poll until it lands in DB)
+                                        const prevTurn = window.mapViewer.sceneContext?.turnCount || 0;
+                                        let pollAttempts = 0;
+                                        const pollInterval = setInterval(async () => {
+                                            pollAttempts++;
+                                            try {
+                                                const scRes = await fetch(`/api/plots/${plotId}/scene-context`, {
+                                                    headers: { 'Authorization': `Bearer ${token}` }
+                                                });
+                                                if (scRes.ok) {
+                                                    const scData = await scRes.json();
+                                                    if (scData && scData.turnCount > prevTurn) {
+                                                        window.mapViewer.updateSceneContext(scData);
+
+                                                        // Reconcile live entity chips with scene context
+                                                        // Remove NPCs that the AI determined are no longer present
+                                                        if (window.mapViewer.liveSceneEntities) {
+                                                            const contextNpcs = (scData.npcsPresent || []).map(n => n.name.toLowerCase());
+                                                            const reconciled = { ...window.mapViewer.liveSceneEntities };
+                                                            reconciled.npcs = reconciled.npcs.filter(name =>
+                                                                contextNpcs.some(cn => cn.includes(name.toLowerCase()) || name.toLowerCase().includes(cn))
+                                                            );
+                                                            window.mapViewer.updateSceneEntities(reconciled);
+                                                        }
+
+                                                        clearInterval(pollInterval);
+                                                    }
+                                                }
+                                            } catch (e) { /* non-critical */ }
+                                            if (pollAttempts >= 10) clearInterval(pollInterval); // give up after 30s
+                                        }, 3000);
                                     }
+
+                                    // Hide narrating indicator, reveal formatted content
+                                    const narratingEl = document.querySelector(`#${streamId} .stream-narrating`);
+                                    if (narratingEl) narratingEl.style.display = 'none';
+                                    streamContainer.style.display = '';
 
                                     // Post-process narrative: dialogue bubbles + entity links
                                     if (window.NarrativeFormatter && fullMessage) {
@@ -1139,6 +1254,7 @@ async function fetchGameInfo(plotId, characterId) {
                 const aiLogBody = { plotId, author: 'AI', content: fullMessage };
                 if (currentSceneEntities) aiLogBody.sceneEntities = currentSceneEntities;
                 if (currentDiscoveries && currentDiscoveries.length > 0) aiLogBody.discoveries = currentDiscoveries;
+                if (currentSkillCheck) aiLogBody.skillCheck = currentSkillCheck;
                 await fetch('/api/game-logs', {
                     method: 'POST',
                     headers: headers,
@@ -1333,7 +1449,24 @@ async function fetchGameInfo(plotId, characterId) {
             contentHtml = div.innerHTML;
         } else if (window.NarrativeFormatter) {
             // AI messages: format with dialogue bubbles + entity links
-            contentHtml = NarrativeFormatter.formatCompletedMessage(
+            // Prepend skill check display if present
+            if (message.skillCheck) {
+                const sc = message.skillCheck;
+                const resultLabels = { fail: 'Failed', pass: 'Passed', strong_success: 'Critical!' };
+                const typeLabels = { physical: 'Physical', social: 'Social', mental: 'Mental', survival: 'Survival' };
+                contentHtml = `<div class="dr-container dr-container--${sc.result} dr-revealed">
+                    <div class="dr-die">🎲</div>
+                    <div class="dr-value">${sc.roll}</div>
+                    <div class="dr-info">
+                        <span class="dr-type">${typeLabels[sc.type] || sc.type} Check — ${sc.difficulty}</span>
+                        <span class="dr-action">${sc.action}</span>
+                    </div>
+                    <span class="dr-result">${resultLabels[sc.result] || sc.result}</span>
+                </div>`;
+            } else {
+                contentHtml = '';
+            }
+            contentHtml += NarrativeFormatter.formatCompletedMessage(
                 message.content,
                 message.sceneEntities || null
             );

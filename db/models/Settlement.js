@@ -31,6 +31,11 @@ const LocationSchema = new Schema({
             default: 'adjacent'
         }
     }],
+    populationLevel: {
+        type: String,
+        enum: ['crowded', 'populated', 'sparse', 'isolated'],
+        default: null
+    },
     discovered: { type: Boolean, default: false },
     generated: { type: Boolean, default: false },  // Has AI described it in detail?
     isStartingLocation: { type: Boolean, default: false }

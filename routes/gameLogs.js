@@ -72,7 +72,7 @@ router.get('/game-logs/:gameLogId/:plotId', ensureAuthenticated, async (req, res
 // Create or update a game log entry
 router.post('/game-logs', ensureAuthenticated, async (req, res) => {
     try {
-        const { plotId, author, content, sceneEntities, discoveries } = req.body;
+        const { plotId, author, content, sceneEntities, discoveries, skillCheck } = req.body;
         const plot = await Plot.findById(plotId).populate('gameLogs');
         if (!plot) return res.status(404).send('Plot not found');
 
@@ -97,6 +97,7 @@ router.post('/game-logs', ensureAuthenticated, async (req, res) => {
         const message = { author, content };
         if (sceneEntities) message.sceneEntities = sceneEntities;
         if (discoveries && discoveries.length > 0) message.discoveries = discoveries;
+        if (skillCheck) message.skillCheck = skillCheck;
         gameLog.messages.push(message);
         await gameLog.save();
 
@@ -142,11 +143,20 @@ router.post('/input/stream', ensureAuthenticated, async (req, res) => {
                     case 'discoveries':
                         res.write(`data: ${JSON.stringify({ discoveries: event.entities })}\n\n`);
                         break;
+                    case 'skill_check':
+                        res.write(`data: ${JSON.stringify({ skill_check: event.data })}\n\n`);
+                        break;
+                    case 'debug':
+                        res.write(`data: ${JSON.stringify({ debug: { category: event.category, message: event.message, detail: event.detail } })}\n\n`);
+                        break;
                     case 'categorized_actions':
                         res.write(`data: ${JSON.stringify({ categorized_actions: event.categories })}\n\n`);
                         break;
                     case 'suggested_actions':
                         res.write(`data: ${JSON.stringify({ suggested_actions: event.actions })}\n\n`);
+                        break;
+                    case 'scene_context':
+                        res.write(`data: ${JSON.stringify({ scene_context: event.context })}\n\n`);
                         break;
                     case 'done':
                         // handled below
