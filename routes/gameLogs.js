@@ -72,7 +72,7 @@ router.get('/game-logs/:gameLogId/:plotId', ensureAuthenticated, async (req, res
 // Create or update a game log entry
 router.post('/game-logs', ensureAuthenticated, async (req, res) => {
     try {
-        const { plotId, author, content } = req.body;
+        const { plotId, author, content, sceneEntities, discoveries } = req.body;
         const plot = await Plot.findById(plotId).populate('gameLogs');
         if (!plot) return res.status(404).send('Plot not found');
 
@@ -94,7 +94,10 @@ router.post('/game-logs', ensureAuthenticated, async (req, res) => {
             gameLog = await GameLog.findById(gameLog._id);
         }
 
-        gameLog.messages.push({ author, content });
+        const message = { author, content };
+        if (sceneEntities) message.sceneEntities = sceneEntities;
+        if (discoveries && discoveries.length > 0) message.discoveries = discoveries;
+        gameLog.messages.push(message);
         await gameLog.save();
 
         res.status(201).json(gameLog);
@@ -132,6 +135,15 @@ router.post('/input/stream', ensureAuthenticated, async (req, res) => {
                         break;
                     case 'chunk':
                         res.write(`data: ${JSON.stringify({ chunk: event.content })}\n\n`);
+                        break;
+                    case 'scene_entities':
+                        res.write(`data: ${JSON.stringify({ scene_entities: event.entities })}\n\n`);
+                        break;
+                    case 'discoveries':
+                        res.write(`data: ${JSON.stringify({ discoveries: event.entities })}\n\n`);
+                        break;
+                    case 'categorized_actions':
+                        res.write(`data: ${JSON.stringify({ categorized_actions: event.categories })}\n\n`);
                         break;
                     case 'suggested_actions':
                         res.write(`data: ${JSON.stringify({ suggested_actions: event.actions })}\n\n`);

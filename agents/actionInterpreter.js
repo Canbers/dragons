@@ -2,6 +2,7 @@ const Plot = require('../db/models/Plot');
 const GameLog = require('../db/models/GameLog');
 const Region = require('../db/models/Region');
 const Settlement = require('../db/models/Settlement');
+const Poi = require('../db/models/Poi');
 const regionFactory = require('../agents/world/factories/regionsFactory');
 const settlementsFactory = require('../agents/world/factories/settlementsFactory');
 const { streamPrompt, GAME_MODEL } = require('../services/gptService');
@@ -111,9 +112,13 @@ ${settlement.description || 'A settlement.'}
         return `  ${conn.direction || '•'}: ${conn.locationName}${via}${discovered}`;
     }).join('\n');
 
-    // Build POIs list (only discovered ones)
-    const pois = (currentLoc.pois || [])
-        .filter(p => p.discovered)
+    // Build POIs list from standalone Poi collection (only discovered ones)
+    const poiDocs = await Poi.find({
+        settlement: settlement._id,
+        locationId: currentLoc._id,
+        discovered: true
+    });
+    const pois = poiDocs
         .map(p => {
             const typeLabel = {
                 'npc': '👤 Person',

@@ -330,6 +330,87 @@
   margin-top: 8px;
 }
 
+/* Scene Live Entities — clickable chips from SSE data */
+.scene-live-entities {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #0f3460;
+}
+
+.scene-entity-group {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.scene-entity-label {
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+}
+
+.scene-entity-chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.scene-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  font-size: 0.8rem;
+  font-family: 'Inter', sans-serif;
+  background: #1a1a2e;
+  border: 1px solid #0f3460;
+  border-radius: 20px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+  color: #f0f0f0;
+}
+
+.scene-chip:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.scene-chip[data-type="npc"] {
+  border-color: rgba(212, 175, 55, 0.5);
+  color: #d4af37;
+}
+
+.scene-chip[data-type="npc"]:hover {
+  background: rgba(212, 175, 55, 0.15);
+  border-color: #d4af37;
+}
+
+.scene-chip[data-type="object"] {
+  border-color: rgba(167, 139, 250, 0.5);
+  color: #a78bfa;
+}
+
+.scene-chip[data-type="object"]:hover {
+  background: rgba(167, 139, 250, 0.15);
+  border-color: #a78bfa;
+}
+
+.scene-chip[data-type="feature"] {
+  border-color: rgba(52, 211, 153, 0.5);
+  color: #34d399;
+}
+
+.scene-chip[data-type="feature"]:hover {
+  background: rgba(52, 211, 153, 0.15);
+  border-color: #34d399;
+}
+
 /* Action Panel */
 .action-panel {
   position: absolute;

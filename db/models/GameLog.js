@@ -14,7 +14,19 @@ const MessageSchema = new Schema({
     content: {
         type: String,
         required: true
-    }
+    },
+    sceneEntities: {
+        npcs: [String],
+        objects: [String],
+        features: [String],
+        locations: [String],
+        currentLocation: String
+    },
+    discoveries: [{
+        name: String,
+        type: String,
+        description: String
+    }]
 });
 
 const GameLogSchema = new Schema({

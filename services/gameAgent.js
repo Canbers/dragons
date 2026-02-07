@@ -10,8 +10,10 @@
 
 const Plot = require('../db/models/Plot');
 const Settlement = require('../db/models/Settlement');
+const Poi = require('../db/models/Poi');
 const GameLog = require('../db/models/GameLog');
-const { openai, buildSystemPrompt, GAME_MODEL } = require('./gptService');
+const { openai, buildSystemPrompt, GAME_MODEL, simplePrompt } = require('./gptService');
+const settlementsFactory = require('../agents/world/factories/settlementsFactory');
 
 // ============ TOOL DEFINITIONS ============
 
@@ -114,18 +116,27 @@ async function executeGetScene(plotId) {
         return { location: settlement.name, description: settlement.description || '', exits: [], npcsPresent: [], objects: [] };
     }
 
+    // First impression: auto-populate POIs for fresh locations
+    const poiCount = await Poi.countDocuments({ settlement: settlement._id, locationId: currentLoc._id });
+    if (poiCount === 0) {
+        await generateFirstImpression(settlement, currentLoc);
+    }
+
+    // Query POIs from standalone collection
+    const pois = await Poi.find({ settlement: settlement._id, locationId: currentLoc._id, discovered: true });
+
     const exits = (currentLoc.connections || []).map(conn => ({
         direction: conn.direction,
         name: conn.locationName,
         via: conn.description || ''
     }));
 
-    const npcsPresent = (currentLoc.pois || [])
-        .filter(p => p.discovered && p.type === 'npc')
-        .map(p => ({ name: p.name, description: p.description || '' }));
+    const npcsPresent = pois
+        .filter(p => p.type === 'npc')
+        .map(p => ({ name: p.name, description: p.description || '', disposition: p.disposition || '' }));
 
-    const objects = (currentLoc.pois || [])
-        .filter(p => p.discovered && p.type !== 'npc')
+    const objects = pois
+        .filter(p => p.type !== 'npc')
         .map(p => ({ name: p.name, type: p.type, description: p.description || '' }));
 
     return {
@@ -141,6 +152,83 @@ async function executeGetScene(plotId) {
     };
 }
 
+/**
+ * Generate first-impression POIs for a location that has none.
+ * Creates 2-4 obvious things you'd see when entering (barkeep in tavern, guard at gate, etc.)
+ */
+async function generateFirstImpression(settlement, location) {
+    console.log(`[FirstImpression] Generating POIs for ${location.name} (${location.type}) in ${settlement.name}`);
+
+    const prompt = `You are populating a ${location.type} location in an RPG settlement.
+
+Settlement: ${settlement.name} — ${settlement.short || settlement.description?.substring(0, 150) || 'a settlement'}
+Location: ${location.name}
+Location type: ${location.type}
+Description: ${location.description || 'No description yet.'}
+
+Generate 2-4 immediately obvious things a player would notice when entering this place. These are the FIRST THINGS you'd see — not hidden secrets.
+
+Rules:
+- NPCs must have PROPER NAMES (e.g. "Grimjaw" not "the barkeep")
+- Objects should be specific and notable (e.g. "Notice Board" not "some furniture")
+- Match the location type (tavern → barkeep, patron; gate → guard; market → merchant)
+- type MUST be one of: npc, object, entrance, landmark, danger, quest, shop, other
+- Include a brief description for each (one sentence)
+- Include an appropriate emoji icon for each
+- For NPCs, include a "disposition" — a short phrase describing their personality and current mood. Make these VARIED: friendly, nervous, bored, eager, grumpy, flirtatious, distracted, desperate, cheerful, secretive, etc. NOT everyone is suspicious or guarded.
+
+Return ONLY valid JSON:
+{
+    "pois": [
+        { "name": "Grimjaw", "type": "npc", "description": "A grizzled barkeep polishing a cracked mug", "disposition": "gruff but fair, respects direct talk", "icon": "👤" },
+        { "name": "Notice Board", "type": "object", "description": "A weathered board pinned with faded requests", "icon": "📋" }
+    ]
+}`;
+
+    try {
+        const result = await simplePrompt('gpt-5-mini',
+            'You generate RPG location details as JSON. Return valid JSON only.',
+            prompt
+        );
+
+        let jsonContent = result.content;
+        const jsonMatch = jsonContent.match(/```(?:json)?\s*([\s\S]*?)```/);
+        if (jsonMatch) jsonContent = jsonMatch[1].trim();
+
+        const parsed = JSON.parse(jsonContent);
+        const pois = parsed.pois || parsed;
+
+        if (!Array.isArray(pois) || pois.length === 0) {
+            console.log('[FirstImpression] No POIs generated');
+            return;
+        }
+
+        // Validate type enum
+        const validTypes = ['npc', 'object', 'entrance', 'landmark', 'danger', 'quest', 'shop', 'other'];
+
+        const created = [];
+        for (const p of pois.slice(0, 4)) {
+            const poiData = {
+                name: p.name,
+                type: validTypes.includes(p.type) ? p.type : 'other',
+                description: p.description || '',
+                disposition: p.disposition || '',
+                icon: p.icon || '',
+                persistent: true,
+                autoGenerated: true
+            };
+            const poi = await settlementsFactory.addPoi(settlement._id, location.name, poiData);
+            if (poi) created.push(poi.name);
+        }
+        if (created.length > 0) {
+            console.log(`[FirstImpression] Created ${created.length} POIs at ${location.name}: ${created.join(', ')}`);
+        }
+
+    } catch (e) {
+        console.error(`[FirstImpression] Failed for ${location.name}:`, e.message);
+    }
+}
+
 async function executeLookupNpc(plotId, npcName) {
     const plot = await Plot.findById(plotId)
         .populate('current_state.current_location.settlement');
@@ -150,18 +238,17 @@ async function executeLookupNpc(plotId, npcName) {
         n.name.toLowerCase().includes(npcName.toLowerCase())
     );
 
-    // Check POIs across settlement locations
+    // Check POIs across the settlement via Poi collection
     const settlement = plot.current_state?.current_location?.settlement;
     let poiNpc = null;
-    if (settlement?.locations) {
-        for (const loc of settlement.locations) {
-            const found = (loc.pois || []).find(p =>
-                p.type === 'npc' && p.name.toLowerCase().includes(npcName.toLowerCase())
-            );
-            if (found) {
-                poiNpc = { name: found.name, description: found.description, foundAt: loc.name, interactionCount: found.interactionCount };
-                break;
-            }
+    if (settlement) {
+        const found = await Poi.findOne({
+            settlement: settlement._id,
+            type: 'npc',
+            name: { $regex: new RegExp(npcName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i') }
+        });
+        if (found) {
+            poiNpc = { name: found.name, description: found.description, foundAt: found.locationName, interactionCount: found.interactionCount };
         }
     }
 
@@ -254,7 +341,12 @@ function formatToolResult(toolName, result) {
                 scene += `\nEXITS: ${result.exits.map(e => `${e.direction}: ${e.name}${e.via ? ' — ' + e.via : ''}`).join('; ')}`;
             }
             if (result.npcsPresent?.length > 0) {
-                scene += `\nPEOPLE HERE: ${result.npcsPresent.map(n => `${n.name}${n.description ? ' — ' + n.description : ''}`).join('; ')}`;
+                scene += `\nPEOPLE HERE: ${result.npcsPresent.map(n => {
+                    let entry = n.name;
+                    if (n.description) entry += ` — ${n.description}`;
+                    if (n.disposition) entry += ` [disposition: ${n.disposition}]`;
+                    return entry;
+                }).join('; ')}`;
             }
             if (result.objects?.length > 0) {
                 scene += `\nNOTABLE OBJECTS: ${result.objects.map(o => `${o.name} (${o.type})`).join('; ')}`;
@@ -412,6 +504,7 @@ ${historyContext}`
 
     // ---- STEP 2: Execute tools ----
     const toolResultTexts = [];
+    const rawToolResults = [];
     let movementNarration = null;
 
     for (const tc of toolCalls) {
@@ -422,6 +515,7 @@ ${historyContext}`
         yield { type: 'tool_call', tool: toolName, display: getToolDisplay(toolName, args) };
 
         const result = await executeTool(plotId, toolName, args);
+        rawToolResults.push({ toolName, result });
         toolResultTexts.push(formatToolResult(toolName, result));
 
         // If movement happened, capture the narration
@@ -431,6 +525,36 @@ ${historyContext}`
     }
 
     console.log(`[GameAgent] Tools executed (${Date.now() - startTime}ms)`);
+
+    // ---- Extract scene entities from tool results ----
+    const featureTypes = new Set(['entrance', 'landmark', 'shop', 'danger', 'quest', 'other']);
+    const sceneEntities = { npcs: [], objects: [], features: [], locations: [], currentLocation: '' };
+    for (const { toolName, result } of rawToolResults) {
+        if (toolName === 'get_scene') {
+            sceneEntities.currentLocation = result.location || '';
+            if (result.npcsPresent) {
+                sceneEntities.npcs.push(...result.npcsPresent.map(n => n.name));
+            }
+            if (result.objects) {
+                for (const o of result.objects) {
+                    if (featureTypes.has(o.type)) {
+                        sceneEntities.features.push(o.name);
+                    } else {
+                        sceneEntities.objects.push(o.name);
+                    }
+                }
+            }
+            if (result.exits) {
+                sceneEntities.locations.push(...result.exits.map(e => e.name));
+            }
+        }
+        if (toolName === 'lookup_npc' && result.found) {
+            if (!sceneEntities.npcs.includes(result.name)) {
+                sceneEntities.npcs.push(result.name);
+            }
+        }
+    }
+    yield { type: 'scene_entities', entities: sceneEntities };
 
     // ---- STEP 3: Stream narrative ----
     const enrichedContext = toolResultTexts.join('\n\n');
@@ -445,7 +569,9 @@ RESPONSE RULES (CRITICAL):
 - Be CONCISE. 2-3 sentences for most responses.
 - Focus ONLY on what is NEW — the direct result of this specific input.
 - Never narrate the player's thoughts or feelings.
-- If the player both acts AND speaks (e.g. "I sit down and say hello"), handle both naturally in one response.`;
+- If the player both acts AND speaks (e.g. "I sit down and say hello"), handle both naturally in one response.
+- When an NPC speaks, ALWAYS format as: NpcName: "Their exact words"
+- Use this exact format with colon and double quotes so the UI can detect dialogue.`;
 
     const narrativeMessages = [
         { role: "system", content: narrativeSystemPrompt },
@@ -490,54 +616,90 @@ RESPONSE RULES (CRITICAL):
         }
         await plot.save();
 
-        // Async discovery parsing
+        // Discovery parsing (awaited for UI)
         try {
             const discoveryService = require('./discoveryService');
             if (discoveryService.likelyHasDiscoveries(fullResponse)) {
-                discoveryService.parseDiscoveries(plotId, fullResponse, input)
-                    .catch(err => console.error('[Discovery] Background parse failed:', err));
+                const applied = await discoveryService.parseDiscoveries(plotId, fullResponse, input);
+                if (applied) {
+                    const discoveryEntities = [];
+                    if (applied.npcs) {
+                        for (const npc of applied.npcs) {
+                            discoveryEntities.push({ name: npc.name, type: 'npc', description: npc.description || '' });
+                        }
+                    }
+                    if (applied.objects) {
+                        for (const obj of applied.objects) {
+                            discoveryEntities.push({ name: obj.name, type: 'object', description: obj.description || '' });
+                        }
+                    }
+                    if (applied.locations) {
+                        for (const loc of applied.locations) {
+                            discoveryEntities.push({ name: loc.name, type: 'location', description: loc.description || '' });
+                        }
+                    }
+                    if (discoveryEntities.length > 0) {
+                        yield { type: 'discoveries', entities: discoveryEntities };
+                    }
+                }
             }
-        } catch (e) { /* non-critical */ }
+        } catch (e) {
+            console.error('[Discovery] Parse error (non-critical):', e.message);
+        }
 
         console.log(`[GameAgent] Narrative complete (${Date.now() - startTime}ms)`);
 
-        // Generate suggested next actions (non-blocking)
+        // Generate categorized suggested actions
         try {
-            console.log(`[GameAgent] Generating suggestions...`);
+            console.log(`[GameAgent] Generating categorized suggestions...`);
             const suggestionResponse = await openai.chat.completions.create({
                 model: GAME_MODEL,
                 messages: [
                     {
                         role: "system",
-                        content: `You suggest player actions for an RPG. Return ONLY valid JSON, no other text.
-Format: {"actions": [{"label": "Short Label", "action": "I do something specific"}, ...]}
+                        content: `You suggest player actions for an RPG, categorized by type. Return ONLY valid JSON, no other text.
+Format: {"categories": {"movement": [{"label": "Short Label", "action": "I do something"}], "social": [...], "explore": [...], "combat": [...]}}
 Rules:
-- Exactly 3 actions
+- 2 actions per RELEVANT category only
+- Omit categories with no relevant actions (empty array or omit key)
 - Labels: 2-4 words (button text)
 - Actions: first-person "I ..." sentences
-- Contextually relevant and varied
-- Never suggest looking around or resting`
+- movement: going to places, traveling
+- social: talking, asking, interacting with people
+- explore: examining, investigating, searching
+- combat: fighting, attacking, defending
+- Be contextually relevant`
                     },
                     {
                         role: "user",
-                        content: `SCENE:\n${enrichedContext}\n\nPLAYER DID: "${input}"\n\nAI RESPONDED: "${fullResponse}"\n\nSuggest 3 actions. Return ONLY JSON.`
+                        content: `SCENE:\n${enrichedContext}\n\nPLAYER DID: "${input}"\n\nAI RESPONDED: "${fullResponse}"\n\nSuggest categorized actions. Return ONLY JSON.`
                     }
                 ]
             });
 
             const suggestionsText = suggestionResponse.choices[0]?.message?.content;
-            console.log(`[GameAgent] Suggestion raw response:`, suggestionsText);
+            console.log(`[GameAgent] Categorized suggestion raw response:`, suggestionsText);
             if (suggestionsText) {
-                // Extract JSON from response (handle markdown code blocks)
                 let jsonStr = suggestionsText.trim();
                 const jsonMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
                 if (jsonMatch) jsonStr = jsonMatch[1].trim();
 
                 const parsed = JSON.parse(jsonStr);
-                if (parsed.actions && Array.isArray(parsed.actions) && parsed.actions.length > 0) {
-                    const actions = parsed.actions.slice(0, 3);
-                    console.log(`[GameAgent] Suggestions generated:`, actions);
-                    yield { type: 'suggested_actions', actions };
+                if (parsed.categories) {
+                    const categories = parsed.categories;
+                    console.log(`[GameAgent] Categorized suggestions generated:`, categories);
+                    yield { type: 'categorized_actions', categories };
+
+                    // Backward compat: flatten first 3 actions for old clients
+                    const flatActions = [];
+                    for (const cat of ['social', 'explore', 'movement', 'combat']) {
+                        if (categories[cat]) {
+                            flatActions.push(...categories[cat]);
+                        }
+                    }
+                    if (flatActions.length > 0) {
+                        yield { type: 'suggested_actions', actions: flatActions.slice(0, 3) };
+                    }
                     console.log(`[GameAgent] Suggestions yielded (${Date.now() - startTime}ms)`);
                 }
             }

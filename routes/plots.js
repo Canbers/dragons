@@ -7,6 +7,7 @@ const Quest = require('../db/models/Quest.js');
 const Character = require('../db/models/Character.js');
 const Region = require('../db/models/Region');
 const Settlement = require('../db/models/Settlement.js');
+const Poi = require('../db/models/Poi.js');
 const GameLog = require('../db/models/GameLog.js');
 const { summarizeLogs, simplePrompt } = require('../services/gptService');
 const { getWorldAndRegionDetails, getInitialQuests } = require('../agents/world/storyTeller.js');
@@ -528,7 +529,11 @@ router.get('/plots/:plotId/map', ensureAuthenticated, async (req, res) => {
 
             if (currentLocation) {
                 connections = currentLocation.connections || [];
-                pois = (currentLocation.pois || []).filter(p => p.discovered);
+                pois = await Poi.find({
+                    settlement: settlement._id,
+                    locationId: currentLocation._id,
+                    discovered: true
+                });
             }
         }
 
@@ -862,33 +867,7 @@ router.post('/plots/:plotId/pois/:poiId/interact', ensureAuthenticated, async (r
     try {
         const { interaction } = req.body;
 
-        const plot = await Plot.findById(req.params.plotId)
-            .populate('current_state.current_location.settlement');
-
-        if (!plot) {
-            return res.status(404).json({ error: 'Plot not found' });
-        }
-
-        const settlement = plot.current_state.current_location.settlement;
-        const locationName = plot.current_state.current_location.locationName;
-
-        if (!settlement || !locationName) {
-            return res.status(400).json({ error: 'Not at a valid location' });
-        }
-
-        // Find the location
-        const location = settlement.locations?.find(l =>
-            l.name.toLowerCase() === locationName.toLowerCase()
-        );
-
-        if (!location) {
-            return res.status(404).json({ error: 'Location not found' });
-        }
-
-        // Find the POI
-        const poi = location.pois?.find(p =>
-            p._id.toString() === req.params.poiId
-        );
+        const poi = await Poi.findById(req.params.poiId);
 
         if (!poi) {
             return res.status(404).json({ error: 'POI not found' });
@@ -901,7 +880,7 @@ router.post('/plots/:plotId/pois/:poiId/interact', ensureAuthenticated, async (r
         }
         poi.discovered = true;
 
-        await settlement.save();
+        await poi.save();
 
         res.json({
             success: true,

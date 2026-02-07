@@ -16,8 +16,9 @@ class MapViewer {
     this.currentPlotId = null;
     this.currentCharacterId = null;
     this.mapData = null;
+    this.liveSceneEntities = null; // Live data from SSE scene_entities events
     this.isMoving = false; // Prevent double-clicks during movement
-    
+
     this.render();
   }
 
@@ -448,38 +449,69 @@ class MapViewer {
   renderSceneView() {
     const scene = this.mapData.scene || {};
     const pois = scene.pois || [];
-    
-    if (pois.length === 0) {
-      return `
-        <div class="scene-view">
-          <div class="scene-header">
-            <h3>🔍 ${scene.location || 'Current Location'}</h3>
-          </div>
-          ${scene.description ? `<p class="scene-description">${scene.description}</p>` : ''}
-          <div class="map-placeholder">
-            <p>No points of interest discovered here yet.</p>
-            <p class="hint">Interact with the world to discover NPCs, objects, and landmarks!</p>
-          </div>
-        </div>
-      `;
+    const live = this.liveSceneEntities || {};
+
+    // Build live entity chips (from SSE scene_entities)
+    const liveNpcs = live.npcs || [];
+    const liveObjects = live.objects || [];
+    const liveFeatures = live.features || [];
+
+    const hasLiveData = liveNpcs.length > 0 || liveObjects.length > 0 || liveFeatures.length > 0;
+
+    // Render live entity chip sections
+    let liveEntitiesHtml = '';
+    if (hasLiveData) {
+      let sections = '';
+
+      if (liveNpcs.length > 0) {
+        const chips = liveNpcs.map(name =>
+          `<button class="scene-chip" data-type="npc" data-name="${this.escapeHtml(name)}">👤 ${this.escapeHtml(name)}</button>`
+        ).join('');
+        sections += `<div class="scene-entity-group"><span class="scene-entity-label">People</span><div class="scene-entity-chips">${chips}</div></div>`;
+      }
+
+      if (liveObjects.length > 0) {
+        const chips = liveObjects.map(name =>
+          `<button class="scene-chip" data-type="object" data-name="${this.escapeHtml(name)}">📦 ${this.escapeHtml(name)}</button>`
+        ).join('');
+        sections += `<div class="scene-entity-group"><span class="scene-entity-label">Objects</span><div class="scene-entity-chips">${chips}</div></div>`;
+      }
+
+      if (liveFeatures.length > 0) {
+        const chips = liveFeatures.map(name =>
+          `<button class="scene-chip" data-type="feature" data-name="${this.escapeHtml(name)}">📍 ${this.escapeHtml(name)}</button>`
+        ).join('');
+        sections += `<div class="scene-entity-group"><span class="scene-entity-label">Places</span><div class="scene-entity-chips">${chips}</div></div>`;
+      }
+
+      liveEntitiesHtml = `<div class="scene-live-entities">${sections}</div>`;
     }
 
-    const poiList = pois.map((poi, index) => {
-      const icon = poi.icon || this.getPoiIcon(poi.type);
-      return `
-        <div class="poi-card" data-poi-id="${poi.id}" data-poi-index="${index}">
-          <div class="poi-header">
-            <span class="poi-icon">${icon}</span>
-            <div class="poi-info">
-              <h4>${poi.name}</h4>
-              <span class="poi-type">${poi.type}</span>
+    // Render POI cards (from map API data)
+    let poiHtml = '';
+    if (pois.length > 0) {
+      const poiList = pois.map((poi, index) => {
+        const icon = poi.icon || this.getPoiIcon(poi.type);
+        return `
+          <div class="poi-card" data-poi-id="${poi.id}" data-poi-index="${index}">
+            <div class="poi-header">
+              <span class="poi-icon">${icon}</span>
+              <div class="poi-info">
+                <h4>${poi.name}</h4>
+                <span class="poi-type">${poi.type}</span>
+              </div>
             </div>
+            <p class="poi-description">${poi.description || 'No description available.'}</p>
+            ${poi.interactionCount > 0 ? `<p class="poi-meta">Interactions: ${poi.interactionCount}</p>` : ''}
           </div>
-          <p class="poi-description">${poi.description || 'No description available.'}</p>
-          ${poi.interactionCount > 0 ? `<p class="poi-meta">Interactions: ${poi.interactionCount}</p>` : ''}
-        </div>
-      `;
-    }).join('');
+        `;
+      }).join('');
+      poiHtml = `<div class="poi-list">${poiList}</div>`;
+    }
+
+    const emptyMessage = !hasLiveData && pois.length === 0
+      ? `<div class="map-placeholder"><p>No points of interest discovered here yet.</p><p class="hint">Interact with the world to discover NPCs, objects, and landmarks!</p></div>`
+      : '';
 
     return `
       <div class="scene-view">
@@ -487,9 +519,9 @@ class MapViewer {
           <h3>🔍 ${scene.location || 'Current Location'}</h3>
         </div>
         ${scene.description ? `<p class="scene-description">${scene.description}</p>` : ''}
-        <div class="poi-list">
-          ${poiList}
-        </div>
+        ${liveEntitiesHtml}
+        ${poiHtml}
+        ${emptyMessage}
       </div>
     `;
   }
@@ -540,6 +572,22 @@ class MapViewer {
       card.addEventListener('click', () => {
         const poiIndex = parseInt(card.dataset.poiIndex);
         this.showPoiActions(poiIndex);
+      });
+    });
+
+    // Scene entity chip clicks
+    const sceneChips = this.container.querySelectorAll('.scene-chip');
+    sceneChips.forEach(chip => {
+      chip.addEventListener('click', () => {
+        const type = chip.dataset.type;
+        const name = chip.dataset.name;
+        if (type === 'npc') {
+          this.executeCustomAction(`I speak to ${name}`);
+        } else if (type === 'object') {
+          this.executeCustomAction(`I examine the ${name}`);
+        } else if (type === 'feature') {
+          this.executeCustomAction(`I check out the ${name}`);
+        }
       });
     });
 
@@ -819,6 +867,25 @@ class MapViewer {
     const submitBtn = document.getElementById('submit-btn');
     if (submitBtn) {
       submitBtn.click();
+    }
+  }
+
+  /**
+   * Update live scene entities from SSE data.
+   * Merges NPCs, objects, and exits into the scene view.
+   */
+  updateSceneEntities(entities) {
+    if (!entities) return;
+    this.liveSceneEntities = entities;
+
+    // Update scene location name if available
+    if (entities.currentLocation && this.mapData?.scene) {
+      this.mapData.scene.location = entities.currentLocation;
+    }
+
+    // Re-render if currently viewing the scene tab
+    if (this.currentZoom === 'scene') {
+      this.render();
     }
   }
 

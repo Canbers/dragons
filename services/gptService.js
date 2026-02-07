@@ -35,6 +35,7 @@ WHAT YOU ALWAYS DO:
 - Show NPC reactions that reflect their own motivations
 - Make clear when actions have costs or risks
 - Leave room for player agency in what happens next
+- NPCs have varied personalities — use their disposition notes
 
 STYLE RULES:
 - Be CONCISE. 2-3 sentences is usually enough.

@@ -1,29 +1,13 @@
 const mongoose = require('mongoose');
 const Schema = mongoose.Schema;
 
-// Point of Interest schema (embedded in locations)
-const PoiSchema = new Schema({
-    name: { type: String, required: true },
-    type: {
-        type: String,
-        enum: ['npc', 'object', 'entrance', 'landmark', 'danger', 'quest', 'shop', 'other'],
-        default: 'other'
-    },
-    description: String,
-    icon: String,                              // Emoji or icon name
-    persistent: { type: Boolean, default: true },  // Stays when you leave?
-    discovered: { type: Boolean, default: false },
-    interactionCount: { type: Number, default: 0 },
-    lastInteraction: String,                   // Brief note of last interaction
-    metadata: Schema.Types.Mixed               // Flexible field for NPC stats, item details, etc.
-}, { _id: true });
-
 // Location schema (places within a settlement)
+// POIs are now stored in the standalone Poi collection (see db/models/Poi.js)
 const LocationSchema = new Schema({
     name: { type: String, required: true },
     type: {
         type: String,
-        enum: ['gate', 'market', 'tavern', 'temple', 'plaza', 'shop', 'residence', 
+        enum: ['gate', 'market', 'tavern', 'temple', 'plaza', 'shop', 'residence',
                'landmark', 'dungeon', 'district', 'docks', 'barracks', 'palace', 'other'],
         default: 'other'
     },
@@ -37,7 +21,7 @@ const LocationSchema = new Schema({
         locationName: String,                  // Name of connected location
         direction: {
             type: String,
-            enum: ['north', 'south', 'east', 'west', 'northeast', 'northwest', 
+            enum: ['north', 'south', 'east', 'west', 'northeast', 'northwest',
                    'southeast', 'southwest', 'up', 'down', 'inside', 'outside']
         },
         description: String,                   // "through the archway", "down the alley"
@@ -47,7 +31,6 @@ const LocationSchema = new Schema({
             default: 'adjacent'
         }
     }],
-    pois: [PoiSchema],                         // Points of interest AT this location
     discovered: { type: Boolean, default: false },
     generated: { type: Boolean, default: false },  // Has AI described it in detail?
     isStartingLocation: { type: Boolean, default: false }

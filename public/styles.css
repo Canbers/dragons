@@ -150,12 +150,11 @@ body {
 }
 
 /* ============================================
-   MESSAGES
+   MESSAGES — Narrative RPG Style
    ============================================ */
 
 .message {
-  margin-bottom: 16px;
-  max-width: 85%;
+  margin-bottom: 20px;
   animation: fadeIn 0.3s ease;
 }
 
@@ -164,48 +163,65 @@ body {
   to { opacity: 1; transform: translateY(0); }
 }
 
+/* Player messages: compact, right-aligned, clearly "you" */
 .message.user {
+  max-width: 70%;
   margin-left: auto;
 }
 
+/* AI/narrator messages: full width, immersive, like reading a book */
 .message.ai {
-  margin-right: auto;
+  max-width: 100%;
 }
 
 .author {
-  font-size: 0.75rem;
-  color: var(--text-muted);
+  font-size: 0.7rem;
+  color: var(--accent-gold);
   margin-bottom: 4px;
-  text-transform: uppercase;
+  font-weight: 600;
   letter-spacing: 0.5px;
+  font-family: 'Inter', sans-serif;
+}
+
+.author.user {
+  text-align: right;
 }
 
 .userText, .systemText {
   padding: 12px 16px;
   border-radius: var(--radius-md);
-  line-height: 1.6;
+  line-height: 1.7;
   font-size: 0.95rem;
 }
 
+/* Player speech: compact indigo bubble */
 .userText {
   background: var(--accent-indigo);
   color: white;
   border-bottom-right-radius: 4px;
+  font-family: 'Inter', sans-serif;
+  font-size: 0.9rem;
 }
 
+/* Narrator text: full-width, immersive, book-like */
 .systemText {
-  background: var(--bg-secondary);
+  background: transparent;
   color: var(--text-primary);
-  border-bottom-left-radius: 4px;
+  border-left: 2px solid var(--border-subtle);
+  border-radius: 0;
+  padding: 16px 20px;
   font-family: 'Crimson Text', serif;
-  font-size: 1rem;
+  font-size: 1.05rem;
+  line-height: 1.8;
 }
 
 .timestamp {
-  font-size: 0.7rem;
+  display: block;
+  font-size: 0.65rem;
   color: var(--text-muted);
-  margin-top: 4px;
+  margin-top: 8px;
   text-align: right;
+  font-family: 'Inter', sans-serif;
 }
 
 /* Streaming cursor */
@@ -219,8 +235,8 @@ body {
   51%, 100% { opacity: 0; }
 }
 
-.message.streaming {
-  border-left: 2px solid var(--accent-gold);
+.message.streaming .systemText {
+  border-left-color: var(--accent-gold);
 }
 
 /* ============================================
@@ -245,17 +261,16 @@ body {
 }
 
 /* ============================================
-   QUICK ACTIONS
+   ACTION PANEL — Primary Interaction
    ============================================ */
 
 #quick-actions {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 12px 16px;
-  background: var(--bg-panel);
-  border-top: 1px solid var(--border-subtle);
-  gap: 12px;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 14px 16px;
+  background: var(--bg-secondary);
+  border-top: 2px solid var(--accent-gold);
 }
 
 #dynamic-actions {
@@ -272,12 +287,12 @@ body {
 }
 
 .quick-action {
-  padding: 8px 14px;
+  padding: 10px 16px;
   font-size: 0.85rem;
   background: var(--bg-input);
-  color: var(--text-secondary);
+  color: var(--text-primary);
   border: 1px solid var(--border-subtle);
-  border-radius: 20px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   transition: all 0.2s ease;
   font-family: 'Inter', sans-serif;
@@ -289,6 +304,7 @@ body {
   color: white;
   border-color: var(--accent-indigo);
   transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
 }
 
 .quick-action:active {
@@ -296,8 +312,8 @@ body {
 }
 
 .quick-action.dynamic-action {
-  border-color: rgba(212, 175, 55, 0.4);
-  transition: all 0.3s ease;
+  border-color: rgba(212, 175, 55, 0.5);
+  color: var(--text-primary);
 }
 
 .quick-action.dynamic-action:hover {
@@ -305,7 +321,8 @@ body {
 }
 
 .quick-action.static-action {
-  opacity: 0.8;
+  opacity: 0.7;
+  font-size: 0.8rem;
 }
 
 .quick-action.static-action:hover {
@@ -323,11 +340,11 @@ body {
 }
 
 /* ============================================
-   INPUT AREA
+   INPUT AREA — Secondary (free-form)
    ============================================ */
 
 #input-area {
-  padding: 12px 16px 16px;
+  padding: 8px 16px 10px;
   background: var(--bg-panel);
   border-top: 1px solid var(--border-subtle);
 }
@@ -803,6 +820,323 @@ body {
 #game-info-map-container,
 #game-info {
   display: none;
+}
+
+/* ============================================
+   NARRATIVE FORMATTER (nf-)
+   Dialogue speech bubbles and entity links
+   ============================================ */
+
+.nf-dialogue {
+  display: block;
+  margin: 8px 0;
+  padding: 8px 12px;
+  border-left: 3px solid var(--accent-indigo);
+  background: rgba(99, 102, 241, 0.08);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+.nf-dialogue-inline {
+  border-left: none;
+  background: none;
+  padding: 0;
+}
+
+.nf-speaker {
+  color: var(--accent-gold);
+  font-weight: 600;
+  font-family: 'Inter', sans-serif;
+  font-size: 0.85rem;
+  display: block;
+  margin-bottom: 2px;
+}
+
+.nf-dialogue-inline .nf-speaker {
+  display: inline;
+  margin-bottom: 0;
+}
+
+.nf-speech {
+  font-style: italic;
+  color: var(--text-primary);
+}
+
+.nf-entity-link {
+  color: var(--accent-gold);
+  cursor: pointer;
+  border-bottom: 1px dotted var(--accent-gold);
+  transition: all 0.15s ease;
+}
+
+.nf-entity-link:hover {
+  color: #e5c158;
+  border-bottom-style: solid;
+  background: rgba(212, 175, 55, 0.1);
+}
+
+.nf-entity-link[data-entity-type="npc"] {
+  color: var(--accent-gold);
+  border-color: var(--accent-gold);
+}
+
+.nf-entity-link[data-entity-type="object"] {
+  color: #a78bfa;
+  border-color: #a78bfa;
+}
+
+.nf-entity-link[data-entity-type="object"]:hover {
+  color: #c4b5fd;
+  background: rgba(167, 139, 250, 0.1);
+}
+
+.nf-entity-link[data-entity-type="location"] {
+  color: #34d399;
+  border-color: #34d399;
+}
+
+.nf-entity-link[data-entity-type="location"]:hover {
+  color: #6ee7b7;
+  background: rgba(52, 211, 153, 0.1);
+}
+
+/* ============================================
+   ENTITY CARDS (ec-)
+   Discovery cards shown inline
+   ============================================ */
+
+.ec-discovery-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 12px 0 8px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.ec-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  max-width: 260px;
+  animation: ec-slide-in 0.3s ease;
+}
+
+@keyframes ec-slide-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.ec-card:hover {
+  border-color: var(--accent-gold);
+  background: rgba(212, 175, 55, 0.08);
+  transform: translateY(-1px);
+}
+
+.ec-icon {
+  font-size: 1.2rem;
+  flex-shrink: 0;
+}
+
+.ec-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.ec-name {
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ec-desc {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ec-badge {
+  font-size: 0.6rem;
+  font-weight: 700;
+  color: var(--accent-gold);
+  background: rgba(212, 175, 55, 0.15);
+  padding: 2px 6px;
+  border-radius: 8px;
+  flex-shrink: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* ============================================
+   ENTITY MENU (em-)
+   Floating context menu on entity click
+   ============================================ */
+
+.em-menu {
+  position: fixed;
+  z-index: 5000;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  min-width: 180px;
+  padding: 4px;
+  animation: em-appear 0.15s ease;
+}
+
+@keyframes em-appear {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.em-header {
+  padding: 8px 12px;
+  font-weight: 600;
+  color: var(--accent-gold);
+  font-size: 0.85rem;
+  border-bottom: 1px solid var(--border-subtle);
+  margin-bottom: 4px;
+}
+
+.em-action {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  text-align: left;
+  background: transparent;
+  color: var(--text-primary);
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-family: 'Inter', sans-serif;
+  transition: background 0.15s ease;
+}
+
+.em-action:hover {
+  background: var(--bg-input);
+  color: var(--accent-gold);
+}
+
+/* ============================================
+   ACTION PANEL (ap-)
+   Categorized action buttons — hero layout
+   ============================================ */
+
+.ap-category {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+}
+
+.ap-category-header {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--accent-gold);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  padding: 0 2px;
+}
+
+.ap-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.ap-action {
+  position: relative;
+  padding: 10px 16px 10px 12px;
+  font-size: 0.85rem;
+}
+
+.ap-action.ap-pop {
+  animation: dynamicPop 0.3s ease forwards;
+}
+
+.ap-utility {
+  margin-left: auto;
+  background: transparent;
+  border: none;
+  padding: 4px 8px;
+}
+
+.ap-utility .ap-action {
+  opacity: 0.7;
+  font-size: 0.8rem;
+  padding: 8px 12px;
+}
+
+.ap-utility .ap-action:hover {
+  opacity: 1;
+}
+
+/* ============================================
+   KEYBOARD HINTS (kb-)
+   ============================================ */
+
+.kb-hint {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 3px;
+  margin-right: 6px;
+  flex-shrink: 0;
+  font-family: 'Inter', sans-serif;
+}
+
+.ap-action:hover .kb-hint {
+  color: white;
+  background: var(--accent-indigo);
+  border-color: var(--accent-indigo);
+}
+
+/* ============================================
+   ACTION PANEL RESPONSIVE
+   ============================================ */
+
+@media (max-width: 600px) {
+  #quick-actions {
+    flex-direction: column;
+  }
+
+  .ap-category {
+    width: 100%;
+  }
+
+  .ap-actions {
+    justify-content: flex-start;
+  }
+
+  .ap-utility {
+    margin-left: 0;
+  }
+
+  .kb-hint {
+    display: none;
+  }
 }
 
 /* ============================================
