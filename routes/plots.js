@@ -9,10 +9,11 @@ const Region = require('../db/models/Region');
 const Settlement = require('../db/models/Settlement.js');
 const Poi = require('../db/models/Poi.js');
 const GameLog = require('../db/models/GameLog.js');
-const { summarizeLogs, simplePrompt } = require('../services/gptService');
+const { summarizeLogs, simplePrompt, UTILITY_MODEL } = require('../services/gptService');
 const { getWorldAndRegionDetails } = require('../agents/world/storyTeller.js');
 const questService = require('../services/questService');
 const movementService = require('../services/movementService');
+const sceneGridService = require('../services/sceneGridService');
 const regionFactory = require('../agents/world/factories/regionsFactory.js');
 const settlementsFactory = require('../agents/world/factories/settlementsFactory.js');
 
@@ -142,11 +143,6 @@ router.post('/plot', ensureAuthenticated, async (req, res) => {
                     locationName: initialRegion.name || 'Unknown',
                     locationDescription: initialRegion.short || 'An unexplored land awaits.',
                     description: initialRegion.short || 'An unexplored land awaits.',
-                    map_data: {
-                        semantic_coordinates: { x: coordinates[0], y: coordinates[1], z: 0 },
-                        connections: [],
-                        points_of_interest: []
-                    }
                 },
                 current_time: 'morning',
                 environment_conditions: 'clear',
@@ -255,7 +251,6 @@ router.post('/plot/:plotId/initialize', ensureAuthenticated, async (req, res) =>
                     const idx = Math.floor(Math.random() * settlement.coordinates.length);
                     const coords = settlement.coordinates[idx] || [0, 0];
                     plot.current_state.current_location.coordinates = coords;
-                    plot.current_state.current_location.map_data.semantic_coordinates = { x: coords[0], y: coords[1], z: 0 };
                 }
             } else if (freshRegion) {
                 plot.current_state.current_location.locationName = freshRegion.name || 'Starting Region';
@@ -409,6 +404,92 @@ router.get('/plots/:plotId/scene-context', ensureAuthenticated, async (req, res)
     }
 });
 
+// Get scene grid data for tile-based interior map
+router.get('/plots/:plotId/scene-grid', ensureAuthenticated, async (req, res) => {
+    const { plotId } = req.params;
+    try {
+        const plot = await Plot.findById(plotId)
+            .populate('current_state.current_location.settlement');
+
+        if (!plot) return res.status(404).json({ error: 'Plot not found' });
+
+        const settlement = plot.current_state?.current_location?.settlement;
+        const locationId = plot.current_state?.current_location?.locationId;
+
+        if (!settlement || !locationId) {
+            return res.json({ grid: null, message: 'No location data' });
+        }
+
+        const currentLoc = settlement.locations?.find(
+            l => l._id.toString() === locationId.toString()
+        );
+
+        if (!currentLoc?.gridGenerated || !currentLoc.interiorGrid) {
+            return res.json({ grid: null, message: 'Grid not generated yet' });
+        }
+
+        // Get POIs with grid positions
+        const pois = await Poi.find({
+            settlement: settlement._id,
+            locationId: currentLoc._id
+        });
+
+        const entities = pois
+            .filter(p => p.gridPosition?.x != null)
+            .map(p => ({
+                id: p._id.toString(),
+                name: p.name,
+                type: p.type,
+                gridPosition: p.gridPosition,
+                discovered: p.discovered,
+                icon: p.icon || ''
+            }));
+
+        // Ensure player has a grid position (backfill for grids generated before tracking)
+        let playerPosition = plot.current_state?.gridPosition || null;
+        if (!playerPosition || playerPosition.x == null) {
+            playerPosition = sceneGridService.findPlayerStart(currentLoc.interiorGrid);
+            plot.current_state.gridPosition = playerPosition;
+            plot.markModified('current_state.gridPosition');
+            await plot.save();
+        }
+
+        // Ambient (unnamed) NPCs — backfill for grids generated before ambient system
+        let ambientNpcs = (currentLoc.ambientNpcs || []).map(a => ({ x: a.x, y: a.y }));
+        if (ambientNpcs.length === 0 && currentLoc.interiorGrid) {
+            const occupied = new Set();
+            for (const e of entities) {
+                if (e.gridPosition?.x != null) occupied.add(`${e.gridPosition.x},${e.gridPosition.y}`);
+            }
+            if (playerPosition) occupied.add(`${playerPosition.x},${playerPosition.y}`);
+            const popLevel = currentLoc.populationLevel || 'populated';
+            const generated = sceneGridService.generateAmbientNpcs(currentLoc.interiorGrid, popLevel, occupied);
+            currentLoc.ambientNpcs = generated;
+            await settlement.save();
+            ambientNpcs = generated.map(a => ({ x: a.x, y: a.y }));
+        }
+
+        // Get exits from doors
+        const exits = (currentLoc.connections || []).map(conn => ({
+            name: conn.locationName,
+            direction: conn.direction
+        }));
+
+        res.json({
+            grid: currentLoc.interiorGrid,
+            width: currentLoc.interiorGrid[0]?.length || 0,
+            height: currentLoc.interiorGrid.length,
+            playerPosition,
+            entities,
+            ambientNpcs,
+            exits,
+            gridParams: currentLoc.gridParams
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // Get quest journal (player-visible quests)
 router.get('/plots/:plotId/quests', ensureAuthenticated, async (req, res) => {
     const { plotId } = req.params;
@@ -509,7 +590,7 @@ Respond in JSON:
     "keyEvents": ["Event 1", "Event 2", "Event 3"]
 }`;
 
-        const response = await simplePrompt('gpt-5-mini',
+        const response = await simplePrompt(UTILITY_MODEL,
             'You write concise story summaries for RPG adventures.',
             summaryPrompt
         );
@@ -612,70 +693,6 @@ router.get('/plots/:plotId/map', ensureAuthenticated, async (req, res) => {
     }
 });
 
-// Update map data (called after AI provides location updates)
-router.patch('/plots/:plotId/map', ensureAuthenticated, async (req, res) => {
-    try {
-        const { connections, pois, coordinates, location_name } = req.body;
-        const plot = await Plot.findById(req.params.plotId);
-
-        if (!plot) {
-            return res.status(404).json({ error: 'Plot not found' });
-        }
-
-        // Initialize if needed
-        if (!plot.current_state.current_location.map_data) {
-            plot.current_state.current_location.map_data = {
-                semantic_coordinates: { x: 0, y: 0, z: 0 },
-                connections: [],
-                points_of_interest: []
-            };
-        }
-
-        // Update location name if moved
-        if (location_name) {
-            plot.current_state.current_location.locationName = location_name;
-        }
-
-        // Merge new connections (preserve existing discovered ones)
-        if (connections && Array.isArray(connections)) {
-            const existingConnections = plot.current_state.current_location.map_data.connections || [];
-            const mergedConnections = [...existingConnections];
-
-            connections.forEach(newConn => {
-                const existingIndex = mergedConnections.findIndex(c => c.name === newConn.name);
-                if (existingIndex >= 0) {
-                    // Update existing connection
-                    mergedConnections[existingIndex] = {
-                        ...mergedConnections[existingIndex],
-                        ...newConn
-                    };
-                } else {
-                    // Add new connection
-                    mergedConnections.push(newConn);
-                }
-            });
-
-            plot.current_state.current_location.map_data.connections = mergedConnections;
-        }
-
-        // Update POIs
-        if (pois && Array.isArray(pois)) {
-            plot.current_state.current_location.map_data.points_of_interest = pois;
-        }
-
-        // Update coordinates if provided
-        if (coordinates) {
-            plot.current_state.current_location.map_data.semantic_coordinates = coordinates;
-        }
-
-        await plot.save();
-        res.json({ updated: true, map_data: plot.current_state.current_location.map_data });
-    } catch (error) {
-        console.error('Error updating map data:', error);
-        res.status(500).json({ error: error.message });
-    }
-});
-
 // Execute quick action from map (travel, interact with POI, custom)
 router.post('/plots/:plotId/quick-action', ensureAuthenticated, async (req, res) => {
     try {
@@ -707,13 +724,12 @@ router.post('/plots/:plotId/quick-action', ensureAuthenticated, async (req, res)
 
         // Mark POI as interacted if applicable
         if (poi_id) {
-            const plot = await Plot.findById(req.params.plotId);
-            const poi = plot.current_state.current_location.map_data.points_of_interest.find(p => p.poi_id === poi_id);
+            const poi = await Poi.findById(poi_id);
             if (poi) {
-                poi.interacted = true;
-                poi.last_interaction = prompt;
-                poi.interaction_count = (poi.interaction_count || 0) + 1;
-                await plot.save();
+                poi.interactionCount = (poi.interactionCount || 0) + 1;
+                poi.lastInteraction = prompt?.substring(0, 200);
+                poi.discovered = true;
+                await poi.save();
             }
         }
 

@@ -29,5 +29,7 @@ services:
         value: org-0ovBa9zPgFJUMMsFWja7tUCN
       - key: GAME_MODEL
         value: gpt-5-mini
+      - key: UTILITY_MODEL
+        value: gpt-5-nano
     healthCheckPath: /
     autoDeploy: true

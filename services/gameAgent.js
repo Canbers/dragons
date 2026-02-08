@@ -12,9 +12,11 @@ const Plot = require('../db/models/Plot');
 const Settlement = require('../db/models/Settlement');
 const Poi = require('../db/models/Poi');
 const GameLog = require('../db/models/GameLog');
-const { openai, buildSystemPrompt, GAME_MODEL, simplePrompt } = require('./gptService');
+const { openai, buildSystemPrompt, GAME_MODEL, UTILITY_MODEL, simplePrompt } = require('./gptService');
 const settlementsFactory = require('../agents/world/factories/settlementsFactory');
 const questService = require('./questService');
+const sceneGridService = require('./sceneGridService');
+const spatialService = require('./spatialService');
 
 // ============ TOOL DEFINITIONS ============
 
@@ -156,12 +158,52 @@ async function executeGetScene(plotId) {
 
     // First impression: auto-populate POIs for fresh locations
     const poiCount = await Poi.countDocuments({ settlement: settlement._id, locationId: currentLoc._id });
+    let firstImpressionResult = null;
     if (poiCount === 0) {
-        await generateFirstImpression(settlement, currentLoc);
+        firstImpressionResult = await generateFirstImpression(settlement, currentLoc);
     }
 
     // Query ALL POIs at this location (AI needs full context; frontend filters by discovered)
     const pois = await Poi.find({ settlement: settlement._id, locationId: currentLoc._id });
+
+    // Generate scene grid if not already generated
+    if (!currentLoc.gridGenerated) {
+        try {
+            const gridParams = firstImpressionResult?.gridParams || null;
+            const { grid, width, height, doors } = sceneGridService.generateSceneGrid(settlement, currentLoc, gridParams);
+            const { poiPositions, playerStart } = sceneGridService.placeEntitiesOnGrid(grid, pois, doors, currentLoc.type);
+
+            // Build occupied set for ambient NPC placement
+            const occupied = new Set();
+            for (const [, pos] of poiPositions) occupied.add(`${pos.x},${pos.y}`);
+            occupied.add(`${playerStart.x},${playerStart.y}`);
+
+            // Generate ambient (background) NPCs based on population level
+            const popLevel = currentLoc.populationLevel || 'populated';
+            const ambientNpcs = sceneGridService.generateAmbientNpcs(grid, popLevel, occupied);
+
+            // Save grid + ambient NPCs to location
+            currentLoc.interiorGrid = grid;
+            currentLoc.gridParams = gridParams;
+            currentLoc.gridGenerated = true;
+            currentLoc.ambientNpcs = ambientNpcs;
+            await settlement.save();
+
+            // Save POI grid positions
+            for (const [poiId, pos] of poiPositions) {
+                await Poi.findByIdAndUpdate(poiId, { gridPosition: pos });
+            }
+
+            // Save player grid position
+            plot.current_state.gridPosition = playerStart;
+            plot.markModified('current_state.gridPosition');
+            await plot.save();
+
+            console.log(`[SceneGrid] Generated ${width}x${height} grid for ${currentLoc.name}, placed ${poiPositions.size} entities + ${ambientNpcs.length} ambient NPCs, player at (${playerStart.x},${playerStart.y})`);
+        } catch (gridError) {
+            console.error(`[SceneGrid] Generation failed for ${currentLoc.name}:`, gridError.message);
+        }
+    }
 
     const exits = (currentLoc.connections || []).map(conn => ({
         direction: conn.direction,
@@ -192,6 +234,14 @@ async function executeGetScene(plotId) {
 }
 
 /**
+ * Helper: prompt additions for type-specific gridParams
+ */
+function getTypeSpecificParamsPrompt(locationType) {
+    const base = `gridParams fields: "condition" (pristine|well-kept|worn|dilapidated|ruined), "wealth" (poor|modest|comfortable|wealthy|opulent), "clutter" (minimal|moderate|cluttered|packed), "lighting" (bright|well-lit|dim|dark)`;
+    return base;
+}
+
+/**
  * Generate first-impression POIs for a location that has none.
  * Creates 2-4 obvious things you'd see when entering (barkeep in tavern, guard at gate, etc.)
  */
@@ -208,8 +258,8 @@ Description: ${location.description || 'No description yet.'}
 Generate 2-4 immediately obvious things a player would notice when entering this place. These are the FIRST THINGS you'd see — not hidden secrets.
 
 Rules:
-- NPCs must have PROPER NAMES (e.g. "Grimjaw" not "the barkeep")
-- Objects should be specific and notable (e.g. "Notice Board" not "some furniture")
+- NPCs must have PROPER NAMES — unique, creative names (NOT generic titles like "the barkeep")
+- Objects should be specific and notable (NOT generic like "some furniture")
 - Match the location type (tavern → barkeep, patron; gate → guard; market → merchant)
 - type MUST be one of: npc, object, entrance, landmark, danger, quest, shop, other
 - Include a brief description for each (one sentence)
@@ -222,17 +272,26 @@ Also pick the POPULATION LEVEL for this location — how busy it feels:
 - "sparse": few people (alleys, warehouses, run-down places)
 - "isolated": empty (ruins, caves, abandoned buildings)
 
-Return ONLY valid JSON:
+Also output a "gridParams" object to control interior layout generation. Choose values that match this location's narrative feel:
+${getTypeSpecificParamsPrompt(location.type)}
+
+Return ONLY valid JSON matching this structure (do NOT copy these example names — generate unique ones for this specific location):
 {
     "populationLevel": "populated",
+    "gridParams": {
+        "condition": "well-kept",
+        "wealth": "modest",
+        "clutter": "moderate",
+        "lighting": "well-lit"
+    },
     "pois": [
-        { "name": "Grimjaw", "type": "npc", "description": "A grizzled barkeep polishing a cracked mug", "disposition": "gruff but fair, respects direct talk", "icon": "👤" },
-        { "name": "Notice Board", "type": "object", "description": "A weathered board pinned with faded requests", "icon": "📋" }
+        { "name": "<UNIQUE_NPC_NAME>", "type": "npc", "description": "<what they look like and are doing>", "disposition": "<personality and mood>", "icon": "👤" },
+        { "name": "<NOTABLE_OBJECT>", "type": "object", "description": "<brief description>", "icon": "📋" }
     ]
 }`;
 
     try {
-        const result = await simplePrompt('gpt-5-mini',
+        const result = await simplePrompt(UTILITY_MODEL,
             'You generate RPG location details as JSON. Return valid JSON only.',
             prompt
         );
@@ -278,8 +337,12 @@ Return ONLY valid JSON:
             console.log(`[FirstImpression] Created ${created.length} POIs at ${location.name}: ${created.join(', ')}`);
         }
 
+        // Return gridParams if AI provided them
+        return { gridParams: parsed.gridParams || null };
+
     } catch (e) {
         console.error(`[FirstImpression] Failed for ${location.name}:`, e.message);
+        return { gridParams: null };
     }
 }
 
@@ -636,7 +699,7 @@ Rules:
 - Tension should reflect the actual mood: successful intimidation of a hostile NPC = tension might DROP (threat neutralized), failed attack = tension RISES
 - playerGoal: infer from context, keep brief`;
 
-        const sceneResult = await simplePrompt('gpt-5-mini',
+        const sceneResult = await simplePrompt(UTILITY_MODEL,
             'You track RPG scene state. Return valid JSON only.',
             sceneUpdatePrompt
         );
@@ -669,13 +732,308 @@ Rules:
             turnCount: (prevContext.turnCount || 0) + 1
         };
 
-        const scPlot = await Plot.findById(plotId);
-        scPlot.current_state.sceneContext = sanitized;
-        await scPlot.save();
+        // Use atomic $set to avoid overwriting gridPosition (this runs fire-and-forget,
+        // concurrent with updateGridPositions which also saves to the same Plot)
+        await Plot.findByIdAndUpdate(plotId, {
+            $set: { 'current_state.sceneContext': sanitized }
+        });
+        const scPlot = await Plot.findById(plotId)
+            .populate('current_state.current_location.settlement');
 
         console.log(`[GameAgent] Scene context updated: tension=${sanitized.tension}, ${sanitized.npcsPresent.length} NPCs, turn ${sanitized.turnCount}`);
+
+        // ---- NPC reactive grid movement based on scene context changes ----
+        try {
+            const scSettlement = scPlot.current_state?.current_location?.settlement;
+            const scLocId = scPlot.current_state?.current_location?.locationId;
+            if (!scSettlement || !scLocId) return;
+
+            const scLoc = scSettlement.locations?.find(l => l._id.toString() === scLocId.toString());
+            if (!scLoc?.gridGenerated || !scLoc.interiorGrid) return;
+
+            const prevNames = new Set((prevContext.npcsPresent || []).map(n => n.name.toLowerCase()));
+            const currNames = new Set(sanitized.npcsPresent.map(n => n.name.toLowerCase()));
+
+            // NPCs that left: clear their grid position
+            const departed = [...prevNames].filter(n => !currNames.has(n));
+            if (departed.length > 0) {
+                for (const name of departed) {
+                    await Poi.updateMany(
+                        { settlement: scSettlement._id, locationId: scLoc._id, type: 'npc',
+                          name: { $regex: new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } },
+                        { $unset: { 'gridPosition.x': '', 'gridPosition.y': '' } }
+                    );
+                }
+                console.log(`[GridMovement] NPCs departed: ${departed.join(', ')}`);
+            }
+
+            // NPCs that arrived: ensure they have a grid position (from ambient or door)
+            const arrived = [...currNames].filter(n => !prevNames.has(n));
+            if (arrived.length > 0) {
+                for (const name of arrived) {
+                    const poi = await Poi.findOne({
+                        settlement: scSettlement._id, locationId: scLoc._id,
+                        name: { $regex: new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }
+                    });
+                    if (poi && poi.gridPosition?.x == null) {
+                        // Try to use an ambient NPC position
+                        if (scLoc.ambientNpcs?.length > 0) {
+                            const amb = scLoc.ambientNpcs[0];
+                            poi.gridPosition = { x: amb.x, y: amb.y };
+                            await poi.save();
+                            scLoc.ambientNpcs.pull(amb._id);
+                            await scSettlement.save();
+                            console.log(`[GridMovement] NPC arrived (from ambient): ${poi.name} at (${amb.x},${amb.y})`);
+                        } else {
+                            // Place at a door
+                            const doors = sceneGridService.findDoors(scLoc.interiorGrid);
+                            if (doors.length > 0) {
+                                poi.gridPosition = { x: doors[0].x, y: doors[0].y };
+                                await poi.save();
+                                console.log(`[GridMovement] NPC arrived (at door): ${poi.name} at (${doors[0].x},${doors[0].y})`);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // NPCs with "leaving" status: move them toward nearest door
+            for (const npc of sanitized.npcsPresent) {
+                if (npc.status !== 'leaving') continue;
+                const poi = await Poi.findOne({
+                    settlement: scSettlement._id, locationId: scLoc._id, type: 'npc',
+                    name: { $regex: new RegExp(`^${npc.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
+                    'gridPosition.x': { $ne: null }
+                });
+                if (!poi) continue;
+
+                const doors = sceneGridService.findDoors(scLoc.interiorGrid);
+                if (doors.length === 0) continue;
+
+                // Find nearest door
+                doors.sort((a, b) => {
+                    const da = spatialService.manhattanDistance(poi.gridPosition.x, poi.gridPosition.y, a.x, a.y);
+                    const db = spatialService.manhattanDistance(poi.gridPosition.x, poi.gridPosition.y, b.x, b.y);
+                    return da - db;
+                });
+
+                const occupied = new Set();
+                const allPois = await Poi.find({ settlement: scSettlement._id, locationId: scLoc._id, 'gridPosition.x': { $ne: null } });
+                for (const p of allPois) occupied.add(`${p.gridPosition.x},${p.gridPosition.y}`);
+
+                occupied.delete(`${poi.gridPosition.x},${poi.gridPosition.y}`);
+                let pos = { ...poi.gridPosition };
+                for (let i = 0; i < 3; i++) {
+                    const step = sceneGridService.stepToward(scLoc.interiorGrid, pos, doors[0], occupied);
+                    if (!step) break;
+                    occupied.delete(`${pos.x},${pos.y}`);
+                    pos = step;
+                    occupied.add(`${pos.x},${pos.y}`);
+                }
+                if (pos.x !== poi.gridPosition.x || pos.y !== poi.gridPosition.y) {
+                    poi.gridPosition = { x: pos.x, y: pos.y };
+                    await poi.save();
+                    console.log(`[GridMovement] NPC leaving: ${poi.name} moved toward door → (${pos.x},${pos.y})`);
+                }
+            }
+        } catch (gridErr) {
+            console.error('[GridMovement] NPC reactive movement failed (non-critical):', gridErr.message);
+        }
+
     } catch (sceneError) {
         console.error('[GameAgent] Scene context update failed (non-critical):', sceneError.message);
+    }
+}
+
+// ============ GRID MOVEMENT ============
+
+/**
+ * Update grid positions for player and NPCs after an action.
+ * - Player moves toward the entity they interacted with (fuzzy name match on input)
+ * - Interacted NPC moves toward the player (1-2 steps)
+ * - On location change (didMove), player position is reset by executeGetScene
+ *
+ * @returns {{ playerMoved: boolean, npcsMoved: string[] }}
+ */
+async function updateGridPositions(plotId, input, didMove, lookedUpNpcNames = []) {
+    console.log(`[GridMovement] Called: input="${input?.substring(0, 40)}", didMove=${didMove}, lookedUpNpcs=${lookedUpNpcNames.join(',')}`);
+    if (didMove) return { playerMoved: false, npcsMoved: [] }; // executeGetScene handles new location
+
+    try {
+        const plot = await Plot.findById(plotId)
+            .populate('current_state.current_location.settlement');
+
+        const settlement = plot?.current_state?.current_location?.settlement;
+        const locationId = plot?.current_state?.current_location?.locationId;
+        let playerPos = plot?.current_state?.gridPosition;
+
+        console.log(`[GridMovement] Data: settlement=${!!settlement}, locationId=${!!locationId}, playerPos=${JSON.stringify(playerPos)}`);
+
+        if (!settlement || !locationId) {
+            return { playerMoved: false, npcsMoved: [] };
+        }
+
+        const currentLoc = settlement.locations?.find(
+            l => l._id.toString() === locationId.toString()
+        );
+
+        if (!currentLoc?.gridGenerated || !currentLoc.interiorGrid) {
+            return { playerMoved: false, npcsMoved: [] };
+        }
+
+        // Backfill player position if missing
+        if (!playerPos || playerPos.x == null) {
+            playerPos = sceneGridService.findPlayerStart(currentLoc.interiorGrid);
+            plot.current_state.gridPosition = playerPos;
+            plot.markModified('current_state.gridPosition');
+            await plot.save();
+            console.log(`[GridMovement] Backfilled player position: (${playerPos.x},${playerPos.y})`);
+        }
+
+        const grid = currentLoc.interiorGrid;
+        const pois = await Poi.find({
+            settlement: settlement._id,
+            locationId: currentLoc._id,
+            'gridPosition.x': { $ne: null }
+        });
+
+        if (pois.length === 0) return { playerMoved: false, npcsMoved: [] };
+
+        // Build occupied set (all entity positions + player)
+        const occupied = new Set();
+        for (const p of pois) occupied.add(`${p.gridPosition.x},${p.gridPosition.y}`);
+        occupied.add(`${playerPos.x},${playerPos.y}`);
+
+        const inputLower = input.toLowerCase();
+        const inputWords = inputLower.split(/\s+/).filter(w => w.length > 2);
+        const result = { playerMoved: false, npcsMoved: [] };
+
+        // --- Find which entity the player is interacting with ---
+        let targetPoi = null;
+        let bestMatchLen = 0;
+
+        for (const poi of pois) {
+            const nameLower = poi.name.toLowerCase();
+            // Full name in input: "I talk to Theron Ashwater" matches "theron ashwater"
+            if (inputLower.includes(nameLower) && nameLower.length > bestMatchLen) {
+                targetPoi = poi;
+                bestMatchLen = nameLower.length;
+            }
+            // First name match: "I talk to Theron" matches "theron ashwater"
+            if (!targetPoi || nameLower.length > bestMatchLen) {
+                const firstName = nameLower.split(/\s+/)[0];
+                if (firstName.length > 2 && inputWords.includes(firstName) && firstName.length > bestMatchLen) {
+                    targetPoi = poi;
+                    bestMatchLen = firstName.length;
+                }
+            }
+        }
+
+        // Fallback: if no name match from input, check if AI looked up an NPC via tool call
+        if (!targetPoi && lookedUpNpcNames.length > 0) {
+            for (const npcName of lookedUpNpcNames) {
+                const npcLower = npcName.toLowerCase();
+                const match = pois.find(p => p.name.toLowerCase() === npcLower ||
+                    p.name.toLowerCase().includes(npcLower) ||
+                    npcLower.includes(p.name.toLowerCase()));
+                if (match) {
+                    targetPoi = match;
+                    console.log(`[GridMovement] Matched via lookup_npc tool: ${match.name}`);
+                    break;
+                }
+            }
+        }
+
+        // Also check for exit/door keywords
+        const exitKeywords = ['door', 'exit', 'leave', 'outside', 'entrance'];
+        const wantsExit = exitKeywords.some(kw => inputLower.includes(kw));
+
+        if (targetPoi) {
+            // Move player toward the target entity
+            const targetPos = targetPoi.gridPosition;
+            const dist = spatialService.manhattanDistance(playerPos.x, playerPos.y, targetPos.x, targetPos.y);
+
+            if (dist > 1) {
+                // Remove player's old position from occupied
+                occupied.delete(`${playerPos.x},${playerPos.y}`);
+
+                const candidates = sceneGridService.findAdjacentWalkable(grid, targetPos, playerPos, occupied);
+                if (candidates.length > 0) {
+                    const newPos = candidates[0];
+                    plot.current_state.gridPosition = { x: newPos.x, y: newPos.y };
+                    occupied.add(`${newPos.x},${newPos.y}`);
+                    result.playerMoved = true;
+                } else {
+                    // Can't get adjacent — take steps toward target instead
+                    occupied.delete(`${playerPos.x},${playerPos.y}`);
+                    let pos = { ...playerPos };
+                    for (let i = 0; i < Math.min(dist - 1, 3); i++) {
+                        const step = sceneGridService.stepToward(grid, pos, targetPos, occupied);
+                        if (!step) break;
+                        occupied.delete(`${pos.x},${pos.y}`);
+                        pos = step;
+                        occupied.add(`${pos.x},${pos.y}`);
+                    }
+                    if (pos.x !== playerPos.x || pos.y !== playerPos.y) {
+                        plot.current_state.gridPosition = { x: pos.x, y: pos.y };
+                        result.playerMoved = true;
+                    }
+                }
+
+                // If target is an NPC, move them toward the player too (conversation proximity)
+                if (targetPoi.type === 'npc' && dist > 2) {
+                    const newPlayerPos = plot.current_state.gridPosition;
+                    occupied.delete(`${targetPoi.gridPosition.x},${targetPoi.gridPosition.y}`);
+                    let npcPos = { ...targetPoi.gridPosition };
+                    // NPC takes 1-2 steps toward player
+                    for (let i = 0; i < 2; i++) {
+                        const step = sceneGridService.stepToward(grid, npcPos, newPlayerPos, occupied);
+                        if (!step) break;
+                        occupied.delete(`${npcPos.x},${npcPos.y}`);
+                        npcPos = step;
+                        occupied.add(`${npcPos.x},${npcPos.y}`);
+                    }
+                    if (npcPos.x !== targetPoi.gridPosition.x || npcPos.y !== targetPoi.gridPosition.y) {
+                        targetPoi.gridPosition = { x: npcPos.x, y: npcPos.y };
+                        await targetPoi.save();
+                        result.npcsMoved.push(targetPoi.name);
+                    }
+                }
+            }
+        } else if (wantsExit) {
+            // Move player toward the nearest door
+            const doors = sceneGridService.findDoors(grid);
+            if (doors.length > 0) {
+                // Find closest door to player
+                doors.sort((a, b) => {
+                    const da = spatialService.manhattanDistance(playerPos.x, playerPos.y, a.x, a.y);
+                    const db = spatialService.manhattanDistance(playerPos.x, playerPos.y, b.x, b.y);
+                    return da - db;
+                });
+                const door = doors[0];
+                const dist = spatialService.manhattanDistance(playerPos.x, playerPos.y, door.x, door.y);
+                if (dist > 1) {
+                    occupied.delete(`${playerPos.x},${playerPos.y}`);
+                    const candidates = sceneGridService.findAdjacentWalkable(grid, door, playerPos, occupied);
+                    if (candidates.length > 0) {
+                        plot.current_state.gridPosition = { x: candidates[0].x, y: candidates[0].y };
+                        result.playerMoved = true;
+                    }
+                }
+            }
+        }
+
+        if (result.playerMoved || result.npcsMoved.length > 0) {
+            plot.markModified('current_state.gridPosition');
+            await plot.save();
+            const pp = plot.current_state.gridPosition;
+            console.log(`[GridMovement] Player→(${pp.x},${pp.y})${result.npcsMoved.length ? ', NPCs moved: ' + result.npcsMoved.join(', ') : ''}`);
+        }
+
+        return result;
+    } catch (err) {
+        console.error('[GridMovement] Error:', err.message);
+        return { playerMoved: false, npcsMoved: [] };
     }
 }
 
@@ -927,9 +1285,40 @@ ${historyContext}`
         if (sc.playerGoal) parts.push(`Player goal: ${sc.playerGoal}`);
         sceneContextBlock = `\nSCENE CONTEXT (from previous turns):\n${parts.join('\n')}\n\nIMPORTANT: Respect NPC states and attitudes from scene context. A terrified NPC stays terrified. A fleeing NPC is gone. Tension level affects how NPCs react. If conversation history shows the player LEFT a location, NPCs from that area are gone even if scene data still lists them.\n`;
     }
+    // Inject spatial context from scene grid
+    let spatialContextBlock = '';
+    try {
+        const spatialPlot = await Plot.findById(plotId)
+            .populate('current_state.current_location.settlement');
+        const spatialSettlement = spatialPlot?.current_state?.current_location?.settlement;
+        const spatialLocId = spatialPlot?.current_state?.current_location?.locationId;
+        const playerGridPos = spatialPlot?.current_state?.gridPosition;
+
+        if (spatialSettlement && spatialLocId && playerGridPos?.x != null) {
+            const spatialLoc = spatialSettlement.locations?.find(l => l._id.toString() === spatialLocId.toString());
+            if (spatialLoc?.gridGenerated && spatialLoc.interiorGrid) {
+                const spatialPois = await Poi.find({
+                    settlement: spatialSettlement._id,
+                    locationId: spatialLocId,
+                    'gridPosition.x': { $ne: null }
+                });
+                if (spatialPois.length > 0) {
+                    spatialContextBlock = '\n' + spatialService.generateSpatialContext(
+                        playerGridPos,
+                        spatialPois.map(p => ({ name: p.name, type: p.type, gridPosition: p.gridPosition })),
+                        { width: spatialLoc.interiorGrid[0]?.length || 0, height: spatialLoc.interiorGrid.length }
+                    ) + '\n';
+                }
+            }
+        }
+    } catch (spatialErr) {
+        // Non-critical: spatial context is a nice-to-have
+        console.error('[Spatial] Context injection failed:', spatialErr.message);
+    }
+
     // Inject quest context
     const questContext = await questService.getQuestContext(plotId);
-    const fullContext = sceneContextBlock + enrichedContext + questContext;
+    const fullContext = sceneContextBlock + enrichedContext + spatialContextBlock + questContext;
 
     // Get optional quest hook for narrator
     const questHook = await questService.getHooksForNarrative(plotId);
@@ -982,18 +1371,24 @@ RESPONSE RULES:
             }
         }
 
-        // Post-processing: state updates (reload plot to avoid version conflicts from tool saves)
-        const freshPlot = await Plot.findById(plotId);
+        // Post-processing: use atomic $set to avoid overwriting gridPosition
         const lowerInput = input.toLowerCase();
+        const activityUpdate = {};
         if (lowerInput.includes('rest') || lowerInput.includes('sleep')) {
-            freshPlot.current_state.current_activity = 'resting';
-            if (lowerInput.includes('until morning')) freshPlot.current_state.current_time = 'morning';
+            activityUpdate['current_state.current_activity'] = 'resting';
+            if (lowerInput.includes('until morning')) activityUpdate['current_state.current_time'] = 'morning';
         } else if (lowerInput.includes('attack') || lowerInput.includes('fight')) {
-            freshPlot.current_state.current_activity = 'in combat';
-        } else if (freshPlot.current_state.current_activity === 'resting') {
-            freshPlot.current_state.current_activity = 'exploring';
+            activityUpdate['current_state.current_activity'] = 'in combat';
+        } else {
+            // Check if currently resting — need to read current state
+            const freshPlot = await Plot.findById(plotId);
+            if (freshPlot?.current_state?.current_activity === 'resting') {
+                activityUpdate['current_state.current_activity'] = 'exploring';
+            }
         }
-        await freshPlot.save();
+        if (Object.keys(activityUpdate).length > 0) {
+            await Plot.findByIdAndUpdate(plotId, { $set: activityUpdate });
+        }
 
         console.log(`[GameAgent] Narrative complete (${Date.now() - startTime}ms)`);
         yield { type: 'debug', category: 'ai', message: `Narrative complete (${fullResponse.length} chars)`, detail: `${Date.now() - startTime}ms total` };
@@ -1070,6 +1465,12 @@ RESPONSE RULES:
         if (questUpdateData) {
             yield { type: 'quest_update', data: questUpdateData };
         }
+
+        // ---- Update grid positions (player + NPC movement) ----
+        const lookedUpNpcNames = rawToolResults
+            .filter(r => r.toolName === 'lookup_npc' && r.result.found)
+            .map(r => r.result.name);
+        await updateGridPositions(plotId, input, didMove, lookedUpNpcNames);
 
     } catch (error) {
         console.error('[GameAgent] Narrative streaming failed:', error.message);

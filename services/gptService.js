@@ -4,9 +4,11 @@ const { OpenAI } = require("openai");
 
 const openai = new OpenAI({ project: project });
 
-// Default model for game interactions
-// gpt-5-mini is efficient and cost-effective
+// Default model for game interactions (narrative, world-building, tool-calling)
 const GAME_MODEL = process.env.GAME_MODEL || "gpt-5-mini";
+
+// Lightweight model for utility tasks (JSON extraction, summarization, scene tracking)
+const UTILITY_MODEL = process.env.UTILITY_MODEL || "gpt-5-nano";
 
 // The Indifferent World - Core system prompt
 const WORLD_SYSTEM_PROMPT = `You are not a game master who helps players succeed. You are a world that exists independently of the player.
@@ -174,7 +176,7 @@ const toolPrompt = async (engine, message, tools, options = {}) => {
 const summarizeLogs = async (logs) => {
     const summaryPrompt = "Summarize the following game logs in a concise manner, preserving key events, decisions, and consequences: " + logs.map(log => log.content).join(' ');
     const completion = await openai.chat.completions.create({
-        model: GAME_MODEL,
+        model: UTILITY_MODEL,
         messages: [
             { role: "system", content: "You are summarizing game events for memory persistence. Focus on: key decisions made, consequences faced, NPC interactions, and world state changes." },
             { role: "user", content: summaryPrompt }
@@ -192,6 +194,7 @@ module.exports = {
     summarizeLogs,
     buildSystemPrompt,
     GAME_MODEL,
+    UTILITY_MODEL,
     TONE_MODIFIERS,
     DIFFICULTY_MODIFIERS,
     STRUCTURE_DIRECTIVES

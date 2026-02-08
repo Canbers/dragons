@@ -27,6 +27,7 @@
     "passport": "^0.7.0",
     "passport-local": "^1.0.0",
     "perlin-noise": "^0.0.1",
+    "rot-js": "^2.2.1",
     "simplex-noise": "^4.0.1",
     "socket.io": "^4.7.5",
     "socket.io-client": "^4.7.5",

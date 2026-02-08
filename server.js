@@ -28,6 +28,7 @@ const allowedOrigins = [
     'https://localhost:3000',
     `http://localhost:${process.env.PORT || 3000}`,
     `https://localhost:${process.env.PORT || 3000}`,
+    'http://localhost:5173',
     'https://dragons.canby.ca',
     process.env.AUTH0_ISSUER_BASE_URL // Include Auth0 callback URL
 ];

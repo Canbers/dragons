@@ -9,9 +9,41 @@
 
 const Plot = require('../db/models/Plot');
 const Settlement = require('../db/models/Settlement');
+const Poi = require('../db/models/Poi');
 const settlementsFactory = require('../agents/world/factories/settlementsFactory');
-const { simplePrompt } = require('./gptService');
+const { simplePrompt, UTILITY_MODEL } = require('./gptService');
 const { sanitizeDirection } = require('./layoutService');
+
+/**
+ * Promote the nearest ambient NPC to a named POI.
+ * Assigns the ambient NPC's grid position to the new POI and removes
+ * the ambient NPC from the location's ambient list so it doesn't render twice.
+ */
+async function promoteAmbientNpc(poi, settlement, locationId) {
+    try {
+        const location = settlement.locations?.id(locationId);
+        if (!location?.ambientNpcs?.length) return;
+
+        // Already has a grid position — no promotion needed
+        if (poi.gridPosition?.x != null) return;
+
+        // Find closest ambient NPC to center of grid (or just pick first available)
+        const ambient = location.ambientNpcs[0];
+        if (!ambient) return;
+
+        // Assign the ambient NPC's position to the new POI
+        poi.gridPosition = { x: ambient.x, y: ambient.y };
+        await poi.save();
+
+        // Remove the consumed ambient NPC from the location
+        location.ambientNpcs.pull(ambient._id);
+        await settlement.save();
+
+        console.log(`[Discovery] Promoted ambient NPC at (${ambient.x},${ambient.y}) → ${poi.name}`);
+    } catch (err) {
+        console.error('[Discovery] Ambient promotion failed:', err.message);
+    }
+}
 
 /**
  * Parse an AI response for discoveries (NPCs, objects, locations)
@@ -59,13 +91,13 @@ Look for:
 Return JSON (empty arrays if nothing new):
 {
     "npcs": [
-        { "name": "Grimjaw", "description": "grizzled barkeep with a scar", "disposition": "gruff but fair, respects direct talk" }
+        { "name": "<NPC_NAME_FROM_TEXT>", "description": "<appearance>", "disposition": "<personality and mood>" }
     ],
     "objects": [
-        { "name": "Notice Board", "description": "covered in faded papers" }
+        { "name": "<OBJECT_NAME_FROM_TEXT>", "description": "<brief description>" }
     ],
     "locations": [
-        { "name": "The Cellar", "direction": "down", "description": "stairs behind the bar" }
+        { "name": "<LOCATION_NAME>", "direction": "<direction>", "description": "<how to get there>" }
     ]
 }
 
@@ -73,7 +105,7 @@ IMPORTANT: Only include things with PROPER NAMES. Skip generic descriptions like
 
         const systemPrompt = 'You extract structured game data from narrative text. Return valid JSON only.';
         
-        const result = await simplePrompt('gpt-5-mini', systemPrompt, extractPrompt);
+        const result = await simplePrompt(UTILITY_MODEL, systemPrompt, extractPrompt);
         let discoveries;
         
         try {
@@ -108,6 +140,13 @@ IMPORTANT: Only include things with PROPER NAMES. Skip generic descriptions like
                 );
 
                 if (poi && poi._isNew) {
+                    // Promote an ambient NPC so this character doesn't appear from nowhere
+                    const location = settlement.locations?.find(l =>
+                        l.name.toLowerCase() === currentLocationName.toLowerCase()
+                    );
+                    if (location) {
+                        await promoteAmbientNpc(poi, settlement, location._id);
+                    }
                     applied.npcs.push({ name: npc.name, description: npc.description || '' });
                     console.log(`[Discovery] New NPC: ${npc.name}`);
                 } else if (poi) {
