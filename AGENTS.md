@@ -38,7 +38,7 @@
 
 ## Frontend — Svelte App (`client/`)
 
-**Status:** Complete — all components built, compiles cleanly
+**Status:** Complete — 20 components built, compiles cleanly (DiceRoll & QuestDiscoveryCard removed — rendering is inline in MessageBubble)
 
 ### File Structure
 ```
@@ -65,7 +65,7 @@ client/src/
 
   lib/gridConstants.js        — TILE_DISPLAY (25 types), ENTITY_COLORS, getEntityChar()
 
-  lib/components/ (22 components)
+  lib/components/ (20 components)
     NarrativeLog.svelte       — Scrollable game log, loads history, auto-scroll
     MessageBubble.svelte      — AI narrative (formatted HTML) or player bubble
     StreamingMessage.svelte   — "Story unfolds..." indicator with dice roll during stream
@@ -84,8 +84,6 @@ client/src/
     ReputationModal.svelte    — NPC/faction/location reputation display
     StorySummary.svelte       — AI story summary with add-to-log
     GameInitOverlay.svelte    — Full-screen init with progress bar + SSE
-    DiceRoll.svelte           — Standalone animated d20 skill check card
-    QuestDiscoveryCard.svelte — Standalone quest discovery card with Track button
 ```
 
 ### Build
@@ -104,26 +102,67 @@ Original vanilla JS files — kept during migration, will be removed after:
 
 ## Backend — Services
 
-### services/gameAgent.js (1474 lines) — THE GOD FILE
-The main game engine. Handles the full turn loop:
-1. Player input → AI tool planning (which tools to call)
+### services/gameAgent.js (~730 lines) — Game Turn Orchestrator
+The main game engine. Orchestrates the full turn loop by coordinating extracted services:
+1. Player input → AI tool planning via `toolPlanPrompt()` (gptService)
 2. Tool execution (get_scene, lookup_npc, move_player, skill_check, etc.)
 3. Spatial context injection (distance/direction to entities)
-4. Narrative streaming (AI generates response with tool context)
-5. Background updates (scene context, quest seeds, discovery parsing)
-6. Grid position updates (player/NPC movement on tile grid)
+4. Narrative streaming via `streamMessages()` (gptService)
+5. Background updates delegated to sceneContextService, questService, discoveryService
+6. Grid position updates delegated to gridMovementService
 
 **Key functions:**
 - `processInput()` — Main entry point. Orchestrates the full turn.
-- `executeGetScene()` — Grid generation, first impressions, POI creation
-- `updateGridPositions()` — Player/NPC movement on grid after each turn
-- `updateSceneContextBackground()` — Background NPC arrival/departure
-- `generateFirstImpression()` — AI creates initial POIs + gridParams for new locations
-- `executeSkillCheck()` — d20 dice roll mechanic
+- `executeTool()` — Dispatcher for all tool calls
+- `executeLookupNpc()`, `executeMovePlayer()`, `executeUpdateRelationship()`, `executeSkillCheck()`, `executeUpdateQuest()` — Individual tool executors
+- `runDiscoveryParsing()` — Post-narrative discovery parsing (delegates to discoveryService)
 
-**Needs refactoring into:** sceneManager, movementManager, narrativeManager, toolExecutor
+### services/sceneManager.js (~225 lines) — Scene Data & First Impressions
+Extracted from gameAgent.js. Handles scene loading and new location initialization.
+- `executeGetScene(plotId)` — Grid generation, first impressions, POI creation
+- `generateFirstImpression(settlement, location)` — AI creates initial POIs + gridParams
+- `getTypeSpecificParamsPrompt(locationType)` — Helper for first-impression prompts
 
-### services/sceneGridService.js (861 lines)
+### services/gridMovementService.js (~195 lines) — Grid Movement
+Extracted from gameAgent.js. Player and NPC movement on the tile grid after each action.
+- `updateGridPositions(plotId, input, didMove, lookedUpNpcNames)` — Player moves toward interacted entity, NPC moves toward player
+
+### services/sceneContextService.js (~200 lines) — Background Scene Updates
+Extracted from gameAgent.js. Background GPT call for NPC arrivals/departures, tension changes.
+- `updateSceneContextBackground(plotId, prevContext, enrichedContext, input, fullResponse)` — Uses atomic `$set` to avoid race conditions
+
+### services/toolFormatters.js (~85 lines) — Pure Functions
+Extracted from gameAgent.js. Human-readable formatting for tool calls.
+- `getToolDisplay(toolName, args)` — Tool call descriptions for debug/UI
+- `formatToolResult(toolName, result)` — Formats tool results as text context for AI
+
+### services/suggestionService.js (~60 lines) — Action Suggestions
+Extracted from gameAgent.js. Generates categorized quick actions after each turn.
+- `generateCategorizedSuggestions(enrichedContext, input, fullResponse)` — Returns { categories, flatActions }
+
+### services/locationResolver.js (~65 lines) — Shared Utility
+Eliminates 7 copy-pasted "find current location" patterns across the codebase.
+- `getCurrentLocation(plot, settlement)` — Resolves location from plot state
+- `getSettlementAndLocation(plotId)` — DB query + resolution in one call
+
+### services/plotInitService.js (~110 lines) — Plot Initialization
+Extracted from routes/plots.js. GPT-heavy initialization of new game sessions.
+- `initializePlot(plot, sendEvent)` — Describe region, generate locations, create opening narrative
+
+### services/gptService.js (~250 lines) — Centralized OpenAI Access
+ALL OpenAI API calls go through this service. Exports:
+- `prompt()` — Game interaction with Indifferent World system prompt + JSON mode
+- `simplePrompt()` — Utility tasks with custom system prompt + JSON mode
+- `streamPrompt()` — Streaming with world system prompt (async generator)
+- `toolPlanPrompt()` — Tool-calling with function definitions
+- `streamMessages()` — Streaming with custom messages (returns stream object)
+- `chatCompletion()` — Simple completion with custom messages (no JSON mode)
+- `summarizeLogs()` — Log summarization for memory persistence
+- `generateStorySummary()` — AI story summary from game logs
+- `buildSystemPrompt()` — Assembles world prompt with tone/difficulty/structure modifiers
+- Constants: `GAME_MODEL`, `UTILITY_MODEL`, `TONE_MODIFIERS`, `DIFFICULTY_MODIFIERS`, `STRUCTURE_DIRECTIVES`
+
+### services/sceneGridService.js (~860 lines)
 Procedural grid generation for all 14 location types via 6 category generators:
 - building_interior, open_space, fortification, underground, waterfront, religious
 - `generateSceneGrid()` — Creates 2D tile array
@@ -131,42 +170,45 @@ Procedural grid generation for all 14 location types via 6 category generators:
 - `generateAmbientNpcs()` — Background NPC population
 - `findPlayerStart()`, `stepToward()`, `findAdjacentWalkable()`, `findDoors()`
 
-### services/spatialService.js (68 lines)
+### services/spatialService.js (~70 lines)
 Distance/direction calculations for AI prompt injection:
 - `manhattanDistance()`, `getZone()` (ADJACENT/CLOSE/NEAR/FAR/DISTANT)
 - `getDirectionTo()` — 8-point compass from atan2
 - `generateSpatialContext()` — Builds text block for AI narrative prompts
 
-### services/questService.js (603 lines)
+### services/questService.js (~600 lines)
 Organic quest lifecycle: seed → discovered → active → completed/failed/expired
 - `shouldGenerateSeeds()`, `generateQuestSeeds()` — Background probability
 - `getHooksForNarrative()` — Rate-limited quest hooks for AI to weave in
 - `detectQuestDiscovery()` — Fuzzy text matching
 - `activateQuest()`, `updateQuestProgress()`, `getJournalQuests()`
 
-### services/discoveryService.js (257 lines)
+### services/discoveryService.js (~260 lines)
 Parses AI narrative for new entity discoveries, persists to DB.
 
-### services/tileConstants.js
+### services/tileConstants.js (~85 lines)
 Shared tile enum (25 types), display metadata, walkability rules. Used by both backend generators and frontend renderer.
 
 ### Other services
-- `services/gptService.js` — OpenAI API wrapper, system prompt builder
-- `services/layoutService.js` — BFS layout for settlement SVG maps
-- `services/movementService.js` — Location-to-location movement logic
+- `services/layoutService.js` (~355 lines) — BFS layout for settlement SVG maps
+- `services/movementService.js` (~520 lines) — Location-to-location movement logic
 
 ## Backend — Routes
 
-### routes/plots.js (938 lines)
-Main game API. Key endpoints:
+### routes/plots.js (~775 lines)
+Main game API. Uses extracted services (plotInitService, gptService, locationResolver).
+Key endpoints:
 - `POST /api/plots/:id/action` — Player action → SSE stream of game events
+- `POST /api/plots/:id/initialize` — New game initialization (delegates to plotInitService)
 - `GET /api/plots/:id/scene-grid` — Grid + entities + player position
 - `GET /api/plots/:id/scene-context` — Tension, NPCs present, events
 - `GET /api/plots/:id/location` — Current location data
 - `GET /api/plots/:id/quests` — Quest journal
+- `GET /api/plots/:id/story-summary` — AI story summary (delegates to gptService)
+- `GET /api/plots/:id/map-data` — Settlement map data (uses locationResolver)
 - `POST /api/plots/:id/quests/:qid/track` — Activate a quest
 
-### routes/gameLogs.js
+### routes/gameLogs.js (~185 lines)
 Game log CRUD + SSE relay for real-time events.
 
 ## Database Models

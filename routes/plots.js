@@ -9,13 +9,14 @@ const Region = require('../db/models/Region');
 const Settlement = require('../db/models/Settlement.js');
 const Poi = require('../db/models/Poi.js');
 const GameLog = require('../db/models/GameLog.js');
-const { summarizeLogs, simplePrompt, UTILITY_MODEL } = require('../services/gptService');
+const { generateStorySummary } = require('../services/gptService');
 const { getWorldAndRegionDetails } = require('../agents/world/storyTeller.js');
 const questService = require('../services/questService');
 const movementService = require('../services/movementService');
 const sceneGridService = require('../services/sceneGridService');
-const regionFactory = require('../agents/world/factories/regionsFactory.js');
 const settlementsFactory = require('../agents/world/factories/settlementsFactory.js');
+const { initializePlot } = require('../services/plotInitService');
+const { getCurrentLocation } = require('../services/locationResolver');
 
 // Fetch world and region details
 router.get('/world-and-region/:plotId', ensureAuthenticated, async (req, res) => {
@@ -89,7 +90,6 @@ router.get('/plots/:plotId', ensureAuthenticated, async (req, res) => {
 });
 
 // Create plot for a given world — instant, no GPT calls
-// Initialization (GPT calls) happens later via POST /api/plot/:plotId/initialize
 router.post('/plot', ensureAuthenticated, async (req, res) => {
     try {
         const { worldId, regionId } = req.body;
@@ -104,7 +104,6 @@ router.post('/plot', ensureAuthenticated, async (req, res) => {
                 return res.status(400).send('Region not found in this world');
             }
         } else {
-            // Backward compat: pick random region
             const regions = await Region.find({ world: worldId });
             if (!regions.length) {
                 return res.status(404).send('No regions found in this world');
@@ -116,7 +115,6 @@ router.post('/plot', ensureAuthenticated, async (req, res) => {
             ? initialRegion.settlements[Math.floor(Math.random() * initialRegion.settlements.length)]
             : null;
 
-        // Use placeholder coordinates
         let coordinates = [0, 0];
         if (initialSettlement) {
             const settlement = await Settlement.findById(initialSettlement);
@@ -163,7 +161,6 @@ router.post('/plot', ensureAuthenticated, async (req, res) => {
 });
 
 // Initialize a newly created plot — SSE endpoint with progress events
-// Performs all the GPT-heavy work: describe region, generate locations, opening narrative
 router.post('/plot/:plotId/initialize', ensureAuthenticated, async (req, res) => {
     try {
         const { plotId } = req.params;
@@ -176,23 +173,20 @@ router.post('/plot/:plotId/initialize', ensureAuthenticated, async (req, res) =>
             return res.status(404).json({ error: 'Plot not found' });
         }
 
-        // Guard: already ready
         if (plot.status === 'ready' || plot.status === undefined) {
             return res.json({ status: 'ready', message: 'Plot already initialized' });
         }
 
-        // Guard: already initializing — but allow retry if stuck for >2 minutes
         if (plot.status === 'initializing') {
             const updatedAt = plot.updatedAt || plot._id.getTimestamp();
             const stuckMs = Date.now() - new Date(updatedAt).getTime();
             if (stuckMs < 120000) {
                 return res.json({ status: 'initializing', message: 'Plot initialization already in progress' });
             }
-            // Stuck for >2 min — treat as failed, allow re-init
             console.warn(`[Init] Plot ${plot._id} stuck at 'initializing' for ${Math.round(stuckMs/1000)}s, resetting`);
         }
 
-        // Begin SSE stream for 'created' or 'error' status
+        // Begin SSE stream
         res.setHeader('Content-Type', 'text/event-stream');
         res.setHeader('Cache-Control', 'no-cache');
         res.setHeader('Connection', 'keep-alive');
@@ -202,101 +196,12 @@ router.post('/plot/:plotId/initialize', ensureAuthenticated, async (req, res) =>
             res.write(`data: ${JSON.stringify({ type, ...data })}\n\n`);
         };
 
-        // Mark as initializing
         plot.status = 'initializing';
         await plot.save();
 
         try {
-            const regionId = plot.current_state.current_location.region;
-            const settlementRef = plot.current_state.current_location.settlement;
-
-            // Step 1: Describe region + starting settlement in parallel (not ALL settlements)
-            sendEvent('progress', { step: 1, total: 3, message: 'Describing the region...' });
-
-            const region = await Region.findById(regionId);
-            const needsRegionDescribe = !region.described;
-            const settlementDoc = settlementRef ? await Settlement.findById(settlementRef) : null;
-            const needsSettlementDescribe = settlementDoc && !settlementDoc.described;
-
-            // Run region describe + settlement describe in parallel
-            const parallelTasks = [];
-            if (needsRegionDescribe) {
-                parallelTasks.push(regionFactory.describe(regionId));
-            }
-            if (needsSettlementDescribe) {
-                parallelTasks.push(settlementsFactory.describe([settlementRef._id || settlementRef]));
-            }
-            if (parallelTasks.length > 0) {
-                await Promise.all(parallelTasks);
-            }
-
-            // Step 2: Generate locations in the starting settlement
-            sendEvent('progress', { step: 2, total: 3, message: 'Generating locations...' });
-            let startingLocationName = null;
-            let settlement = null;
-            if (settlementRef) {
-                startingLocationName = await settlementsFactory.ensureLocations(settlementRef);
-                settlement = await Settlement.findById(settlementRef);
-            }
-
-            // Step 3: Update plot with real names/coordinates, create game log
-            sendEvent('progress', { step: 3, total: 3, message: 'Preparing your starting position...' });
-            const freshRegion = await Region.findById(regionId);
-
-            if (settlement) {
-                plot.current_state.current_location.locationName = startingLocationName || settlement.name || 'Starting Settlement';
-                plot.current_state.current_location.locationDescription = settlement.description || 'A place to begin your journey.';
-                plot.current_state.current_location.description = settlement.description || 'A place to begin your journey.';
-                if (settlement.coordinates && settlement.coordinates.length > 0) {
-                    const idx = Math.floor(Math.random() * settlement.coordinates.length);
-                    const coords = settlement.coordinates[idx] || [0, 0];
-                    plot.current_state.current_location.coordinates = coords;
-                }
-            } else if (freshRegion) {
-                plot.current_state.current_location.locationName = freshRegion.name || 'Starting Region';
-                plot.current_state.current_location.locationDescription = freshRegion.description || 'An unexplored land awaits.';
-                plot.current_state.current_location.description = freshRegion.description || 'An unexplored land awaits.';
-            }
-            await plot.save();
-
-            // Sync locationId if settlement has locations
-            if (settlementRef) {
-                await movementService.syncLocationId(plot._id);
-            }
-
-            // Reload plot to get synced data
-            const updatedPlot = await Plot.findById(plot._id);
-            const finalLocationName = updatedPlot.current_state.current_location.locationName;
-            const locationDesc = updatedPlot.current_state.current_location.locationDescription;
-            const settlementName = settlement ? settlement.name : (freshRegion ? freshRegion.name : 'the wilds');
-
-            // Create opening narrative and game log
-
-            const openingMessage = `You arrive at ${finalLocationName} in ${settlementName}.\n\n${locationDesc}\n\nThe world stretches before you—alive, indifferent, and full of possibility. What will you do?`;
-
-            const gameLog = new GameLog({
-                plotId: plot._id,
-                messages: [{
-                    author: 'AI',
-                    content: openingMessage,
-                    timestamp: new Date()
-                }]
-            });
-            await gameLog.save();
-
-            updatedPlot.gameLogs.push(gameLog._id);
-            updatedPlot.status = 'ready';
-            await updatedPlot.save();
-
-            sendEvent('complete', { message: 'Your adventure is ready!', locationName: finalLocationName });
+            await initializePlot(plot, sendEvent);
             res.end();
-
-            // Fire-and-forget background tasks — don't block the player
-            // Describe remaining settlements in the region
-            regionFactory.describeSettlements(regionId).catch(err => {
-                console.error('[Init] Background settlement description failed:', err.message);
-            });
-
         } catch (initError) {
             console.error('[Init] Error during initialization:', initError);
             plot.status = 'error';
@@ -339,7 +244,6 @@ router.put('/plots/:plotId/settings', ensureAuthenticated, async (req, res) => {
     const { plotId } = req.params;
     const { tone, difficulty } = req.body;
 
-    // Validate inputs
     const validTones = ['dark', 'classic', 'whimsical'];
     const validDifficulties = ['casual', 'hardcore'];
 
@@ -356,20 +260,15 @@ router.put('/plots/:plotId/settings', ensureAuthenticated, async (req, res) => {
             return res.status(404).json({ error: 'Plot not found' });
         }
 
-        // Initialize settings if they don't exist
         if (!plot.settings) {
             plot.settings = { tone: 'classic', difficulty: 'casual' };
         }
 
-        // Update only provided fields
         if (tone) plot.settings.tone = tone;
         if (difficulty) plot.settings.difficulty = difficulty;
 
         await plot.save();
-        res.json({
-            message: 'Settings updated',
-            settings: plot.settings
-        });
+        res.json({ message: 'Settings updated', settings: plot.settings });
     } catch (error) {
         console.error('Error updating settings:', error);
         res.status(500).json({ error: error.message });
@@ -428,7 +327,6 @@ router.get('/plots/:plotId/scene-grid', ensureAuthenticated, async (req, res) =>
             return res.json({ grid: null, message: 'Grid not generated yet' });
         }
 
-        // Get POIs with grid positions
         const pois = await Poi.find({
             settlement: settlement._id,
             locationId: currentLoc._id
@@ -445,7 +343,7 @@ router.get('/plots/:plotId/scene-grid', ensureAuthenticated, async (req, res) =>
                 icon: p.icon || ''
             }));
 
-        // Ensure player has a grid position (backfill for grids generated before tracking)
+        // Ensure player has a grid position
         let playerPosition = plot.current_state?.gridPosition || null;
         if (!playerPosition || playerPosition.x == null) {
             playerPosition = sceneGridService.findPlayerStart(currentLoc.interiorGrid);
@@ -454,7 +352,7 @@ router.get('/plots/:plotId/scene-grid', ensureAuthenticated, async (req, res) =>
             await plot.save();
         }
 
-        // Ambient (unnamed) NPCs — backfill for grids generated before ambient system
+        // Ambient NPCs — backfill for grids generated before ambient system
         let ambientNpcs = (currentLoc.ambientNpcs || []).map(a => ({ x: a.x, y: a.y }));
         if (ambientNpcs.length === 0 && currentLoc.interiorGrid) {
             const occupied = new Set();
@@ -469,7 +367,6 @@ router.get('/plots/:plotId/scene-grid', ensureAuthenticated, async (req, res) =>
             ambientNpcs = generated.map(a => ({ x: a.x, y: a.y }));
         }
 
-        // Get exits from doors
         const exits = (currentLoc.connections || []).map(conn => ({
             name: conn.locationName,
             direction: conn.direction
@@ -556,46 +453,16 @@ router.get('/plots/:plotId/story-summary', ensureAuthenticated, async (req, res)
             return res.status(404).json({ error: 'Plot not found' });
         }
 
-        // Get recent game logs
         const logs = await GameLog.find({ plotId: plotId })
             .sort({ _id: -1 })
-            .limit(5); // Get last few log documents
+            .limit(5);
 
-        if (logs.length === 0 || (logs.length === 1 && logs[0].messages.length === 0)) {
-            return res.json({
-                summary: "Your adventure has just begun. The world awaits your first actions.",
-                keyEvents: []
-            });
-        }
-
-        // Build context for summary - flat map all messages from logs
         const allMessages = logs.reverse().flatMap(log => log.messages);
-        const logText = allMessages.map(l => `${l.author}: ${l.content}`).join('\n');
         const worldName = plot.world?.name || 'Unknown World';
         const locationName = plot.current_state?.current_location?.settlement?.name ||
                             plot.current_state?.current_location?.region?.name || 'Unknown';
 
-        // Use GPT to generate summary
-        const summaryPrompt = `Summarize this adventure in 3-4 sentences. Focus on key events, decisions, and their consequences. Write it as a story recap, in past tense.
-
-World: ${worldName}
-Current Location: ${locationName}
-
-Recent Events:
-${logText}
-
-Respond in JSON:
-{
-    "summary": "Your narrative summary here",
-    "keyEvents": ["Event 1", "Event 2", "Event 3"]
-}`;
-
-        const response = await simplePrompt(UTILITY_MODEL,
-            'You write concise story summaries for RPG adventures.',
-            summaryPrompt
-        );
-
-        const result = JSON.parse(response.content);
+        const result = await generateStorySummary(worldName, locationName, allMessages);
         res.json(result);
     } catch (error) {
         console.error('Error generating story summary:', error);
@@ -618,42 +485,30 @@ router.get('/plots/:plotId/map', ensureAuthenticated, async (req, res) => {
 
         const region = plot.current_state.current_location.region;
         const settlement = plot.current_state.current_location.settlement;
-        const currentLocationName = plot.current_state.current_location.locationName;
+        const { location: currentLocation } = getCurrentLocation(plot, settlement);
 
-        // Find current location within settlement (if we have locations)
-        let currentLocation = null;
         let connections = [];
         let pois = [];
 
-        if (settlement?.locations?.length > 0) {
-            currentLocation = settlement.locations.find(l =>
-                l.name.toLowerCase() === currentLocationName?.toLowerCase()
-            ) || settlement.locations.find(l => l.isStartingLocation) || settlement.locations[0];
-
-            if (currentLocation) {
-                connections = currentLocation.connections || [];
-                pois = await Poi.find({
-                    settlement: settlement._id,
-                    locationId: currentLocation._id,
-                    discovered: true
-                });
-            }
+        if (currentLocation) {
+            connections = currentLocation.connections || [];
+            pois = await Poi.find({
+                settlement: settlement._id,
+                locationId: currentLocation._id,
+                discovered: true
+            });
         }
 
-        // Build response with three zoom levels of data
         res.json({
-            // Region view data
             region: {
                 name: region?.name || 'Unknown Region',
                 description: region?.description || '',
-                map: region?.map || null,  // The terrain array for canvas rendering
-                settlements: []  // TODO: Add other settlements with coords
+                map: region?.map || null,
+                settlements: []
             },
-
-            // Local view data (locations within settlement)
             local: {
                 settlementName: settlement?.name || 'Unknown Settlement',
-                current: currentLocation?.name || currentLocationName || 'Unknown Location',
+                current: currentLocation?.name || plot.current_state.current_location.locationName || 'Unknown Location',
                 currentDescription: currentLocation?.description || plot.current_state.current_location.description || '',
                 connections: connections.map(c => ({
                     name: c.locationName,
@@ -661,7 +516,6 @@ router.get('/plots/:plotId/map', ensureAuthenticated, async (req, res) => {
                     description: c.description,
                     distance: c.distance || 'adjacent'
                 })),
-                // All discovered locations in the settlement
                 discoveredLocations: (settlement?.locations || [])
                     .filter(l => l.discovered)
                     .map(l => ({
@@ -669,13 +523,11 @@ router.get('/plots/:plotId/map', ensureAuthenticated, async (req, res) => {
                         type: l.type,
                         shortDescription: l.shortDescription,
                         coordinates: l.coordinates,
-                        isCurrent: l.name.toLowerCase() === currentLocation?.name?.toLowerCase()
+                        isCurrent: currentLocation && l._id.toString() === currentLocation._id.toString()
                     }))
             },
-
-            // Scene view data (POIs at current location)
             scene: {
-                location: currentLocation?.name || currentLocationName || 'Unknown',
+                location: currentLocation?.name || plot.current_state.current_location.locationName || 'Unknown',
                 description: currentLocation?.description || '',
                 pois: pois.map(p => ({
                     id: p._id,
@@ -693,7 +545,7 @@ router.get('/plots/:plotId/map', ensureAuthenticated, async (req, res) => {
     }
 });
 
-// Execute quick action from map (travel, interact with POI, custom)
+// Execute quick action from map
 router.post('/plots/:plotId/quick-action', ensureAuthenticated, async (req, res) => {
     try {
         const { actionType, target, customPrompt, poi_id } = req.body;
@@ -704,7 +556,7 @@ router.post('/plots/:plotId/quick-action', ensureAuthenticated, async (req, res)
                 prompt = customPrompt || `I travel to ${target}`;
                 break;
             case 'poi-action':
-                prompt = customPrompt; // Pre-built prompt from suggested action
+                prompt = customPrompt;
                 break;
             case 'poi-custom':
                 prompt = `${customPrompt} (interacting with ${target})`;
@@ -722,7 +574,6 @@ router.post('/plots/:plotId/quick-action', ensureAuthenticated, async (req, res)
                 prompt = customPrompt;
         }
 
-        // Mark POI as interacted if applicable
         if (poi_id) {
             const poi = await Poi.findById(poi_id);
             if (poi) {
@@ -733,7 +584,6 @@ router.post('/plots/:plotId/quick-action', ensureAuthenticated, async (req, res)
             }
         }
 
-        // Return the prompt to be submitted via the existing chat flow
         res.json({ prompt });
     } catch (error) {
         console.error('Error handling quick action:', error);
@@ -743,7 +593,6 @@ router.post('/plots/:plotId/quick-action', ensureAuthenticated, async (req, res)
 
 // ========== MOVEMENT API ==========
 
-// Get current location with full details
 router.get('/plots/:plotId/location', ensureAuthenticated, async (req, res) => {
     try {
         const locationData = await movementService.getCurrentLocation(req.params.plotId);
@@ -754,7 +603,6 @@ router.get('/plots/:plotId/location', ensureAuthenticated, async (req, res) => {
     }
 });
 
-// Get valid moves from current location
 router.get('/plots/:plotId/moves', ensureAuthenticated, async (req, res) => {
     try {
         const moves = await movementService.getValidMoves(req.params.plotId);
@@ -765,7 +613,6 @@ router.get('/plots/:plotId/moves', ensureAuthenticated, async (req, res) => {
     }
 });
 
-// Move to a connected location
 router.post('/plots/:plotId/move', ensureAuthenticated, async (req, res) => {
     try {
         const { targetId, targetName, direction } = req.body;
@@ -778,16 +625,13 @@ router.post('/plots/:plotId/move', ensureAuthenticated, async (req, res) => {
         }
 
         const result = await movementService.moveToLocation(req.params.plotId, {
-            targetId,
-            targetName,
-            direction
+            targetId, targetName, direction
         });
 
         if (!result.success) {
             return res.status(400).json(result);
         }
 
-        // Also log the movement to game log
         const plot = await Plot.findById(req.params.plotId).populate('gameLogs');
 
         if (plot && result.narration) {
@@ -815,14 +659,11 @@ router.post('/plots/:plotId/move', ensureAuthenticated, async (req, res) => {
     }
 });
 
-// Check if a move is valid (without executing)
 router.post('/plots/:plotId/can-move', ensureAuthenticated, async (req, res) => {
     try {
         const { targetId, targetName, direction } = req.body;
         const result = await movementService.canMoveTo(req.params.plotId, {
-            targetId,
-            targetName,
-            direction
+            targetId, targetName, direction
         });
         res.json(result);
     } catch (error) {
@@ -831,7 +672,6 @@ router.post('/plots/:plotId/can-move', ensureAuthenticated, async (req, res) => 
     }
 });
 
-// Sync locationId from locationName (migration helper)
 router.post('/plots/:plotId/sync-location', ensureAuthenticated, async (req, res) => {
     try {
         const locationId = await movementService.syncLocationId(req.params.plotId);
@@ -844,7 +684,6 @@ router.post('/plots/:plotId/sync-location', ensureAuthenticated, async (req, res
 
 // ========== POI (Points of Interest) API ==========
 
-// Get POIs at current location
 router.get('/plots/:plotId/pois', ensureAuthenticated, async (req, res) => {
     try {
         const locationData = await movementService.getCurrentLocation(req.params.plotId);
@@ -858,7 +697,6 @@ router.get('/plots/:plotId/pois', ensureAuthenticated, async (req, res) => {
     }
 });
 
-// Add or update a POI at current location
 router.post('/plots/:plotId/pois', ensureAuthenticated, async (req, res) => {
     try {
         const { name, type, description, icon, persistent } = req.body;
@@ -900,7 +738,6 @@ router.post('/plots/:plotId/pois', ensureAuthenticated, async (req, res) => {
     }
 });
 
-// Record interaction with a POI
 router.post('/plots/:plotId/pois/:poiId/interact', ensureAuthenticated, async (req, res) => {
     try {
         const { interaction } = req.body;
@@ -911,7 +748,6 @@ router.post('/plots/:plotId/pois/:poiId/interact', ensureAuthenticated, async (r
             return res.status(404).json({ error: 'POI not found' });
         }
 
-        // Update interaction tracking
         poi.interactionCount = (poi.interactionCount || 0) + 1;
         if (interaction) {
             poi.lastInteraction = interaction.substring(0, 200);

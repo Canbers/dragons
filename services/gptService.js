@@ -156,6 +156,42 @@ const streamPrompt = async function* (engine, message, options = {}) {
     }
 };
 
+/**
+ * Generate an AI story summary from game logs.
+ * Extracted from routes/plots.js GET /plots/:plotId/story-summary.
+ */
+const generateStorySummary = async (worldName, locationName, logMessages) => {
+    if (!logMessages || logMessages.length === 0) {
+        return {
+            summary: "Your adventure has just begun. The world awaits your first actions.",
+            keyEvents: []
+        };
+    }
+
+    const logText = logMessages.map(l => `${l.author}: ${l.content}`).join('\n');
+
+    const summaryPrompt = `Summarize this adventure in 3-4 sentences. Focus on key events, decisions, and their consequences. Write it as a story recap, in past tense.
+
+World: ${worldName}
+Current Location: ${locationName}
+
+Recent Events:
+${logText}
+
+Respond in JSON:
+{
+    "summary": "Your narrative summary here",
+    "keyEvents": ["Event 1", "Event 2", "Event 3"]
+}`;
+
+    const response = await simplePrompt(UTILITY_MODEL,
+        'You write concise story summaries for RPG adventures.',
+        summaryPrompt
+    );
+
+    return JSON.parse(response.content);
+};
+
 const summarizeLogs = async (logs) => {
     const summaryPrompt = "Summarize the following game logs in a concise manner, preserving key events, decisions, and consequences: " + logs.map(log => log.content).join(' ');
     const completion = await openai.chat.completions.create({
@@ -168,12 +204,57 @@ const summarizeLogs = async (logs) => {
     return completion.choices[0].message.content;
 };
 
+/**
+ * Tool-planning prompt: sends messages with OpenAI function-calling tools.
+ * Returns the response message (which may contain tool_calls).
+ */
+const toolPlanPrompt = async (engine, messages, tools, toolChoice = 'auto') => {
+    const model = engine || GAME_MODEL;
+    const completion = await openai.chat.completions.create({
+        model,
+        messages,
+        tools,
+        tool_choice: toolChoice
+    });
+    return completion.choices[0].message;
+};
+
+/**
+ * Stream a custom messages array (no world system prompt injected).
+ * Returns an async iterable of chunks from the OpenAI streaming API.
+ */
+const streamMessages = async (engine, messages) => {
+    const model = engine || GAME_MODEL;
+    return openai.chat.completions.create({
+        model,
+        messages,
+        stream: true
+    });
+};
+
+/**
+ * Simple chat completion with custom messages (no JSON mode, no world prompt).
+ * Returns the full response message object.
+ */
+const chatCompletion = async (engine, messages) => {
+    const model = engine || GAME_MODEL;
+    const completion = await openai.chat.completions.create({
+        model,
+        messages
+    });
+    return completion.choices[0].message;
+};
+
 module.exports = {
     openai,
     prompt,
     simplePrompt,
     streamPrompt,
+    toolPlanPrompt,
+    streamMessages,
+    chatCompletion,
     summarizeLogs,
+    generateStorySummary,
     buildSystemPrompt,
     GAME_MODEL,
     UTILITY_MODEL,
