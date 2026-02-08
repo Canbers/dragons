@@ -48,7 +48,8 @@ MONGO_URL=mongodb://localhost:27017/dragons
 # OpenAI
 OPENAI_API_KEY=your-openai-api-key
 DRAGONS_PROJECT=your-openai-project-id
-GAME_MODEL=gpt-4o-mini
+GAME_MODEL=gpt-5-mini
+UTILITY_MODEL=gpt-5-nano
 
 # Auth0 (or skip with SKIP_AUTH=true for local dev)
 SKIP_AUTH=true

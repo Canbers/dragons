@@ -44,7 +44,8 @@
 | MONGO_URL | (set in dashboard) | **Yes** |
 | OPENAI_API_KEY | (set in dashboard) | **Yes** |
 | OPENAI_ORG_ID | org-0ovBa9zPgFJUMMsFWja7tUCN | No |
-| GAME_MODEL | gpt-4o-mini | No |
+| GAME_MODEL | gpt-5-mini | No |
+| UTILITY_MODEL | gpt-5-nano | No |
 
 ### Free Tier Notes
 

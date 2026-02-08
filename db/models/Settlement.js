@@ -38,7 +38,12 @@ const LocationSchema = new Schema({
     },
     discovered: { type: Boolean, default: false },
     generated: { type: Boolean, default: false },  // Has AI described it in detail?
-    isStartingLocation: { type: Boolean, default: false }
+    isStartingLocation: { type: Boolean, default: false },
+    // Scene grid data (tile-based interior map)
+    interiorGrid: { type: [[Number]], default: null },
+    gridParams: { type: Schema.Types.Mixed, default: null },
+    gridGenerated: { type: Boolean, default: false },
+    ambientNpcs: [{ x: Number, y: Number }]
 }, { _id: true });
 
 const Settlement = new Schema(

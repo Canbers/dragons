@@ -65,56 +65,11 @@ const Plot = new Schema(
                 description: {
                     type: String, // e.g., "traveling between settlements", "exploring ruins"
                 },
-                // Interactive Semantic Map data
-                map_data: {
-                    // Abstract grid coordinates (not pixels)
-                    semantic_coordinates: {
-                        x: { type: Number, default: 0 },
-                        y: { type: Number, default: 0 },
-                        z: { type: Number, default: 0 } // floor/level
-                    },
-                    // Connected locations
-                    connections: [{
-                        name: String,
-                        direction: {
-                            type: String,
-                            enum: ['north', 'south', 'east', 'west', 'northeast', 'northwest', 'southeast', 'southwest', 'up', 'down', 'inside', 'outside']
-                        },
-                        distance: {
-                            type: String,
-                            enum: ['adjacent', 'close', 'far', 'unknown'],
-                            default: 'adjacent'
-                        },
-                        discovered: {
-                            type: Boolean,
-                            default: true
-                        },
-                        last_visited: Date,
-                        notes: String // "Where you met the guard"
-                    }],
-                    // Points of interest in current location
-                    points_of_interest: [{
-                        poi_id: String, // unique identifier
-                        name: String,
-                        type: {
-                            type: String,
-                            enum: ['npc', 'object', 'entrance', 'landmark', 'danger', 'quest']
-                        },
-                        description: String,
-                        icon: String, // emoji or icon name
-                        position: String, // "north side", "center", etc.
-                        // AI-suggested quick actions
-                        suggested_actions: [{
-                            label: String,
-                            prompt: String,
-                            icon: String
-                        }],
-                        // Interaction tracking
-                        interacted: { type: Boolean, default: false },
-                        last_interaction: String,
-                        interaction_count: { type: Number, default: 0 }
-                    }]
-                }
+            },
+            // Player position on scene grid (tile coordinates)
+            gridPosition: {
+                x: { type: Number, default: null },
+                y: { type: Number, default: null }
             },
             current_time: {
                 type: String, // e.g., "morning", "evening", "night"
