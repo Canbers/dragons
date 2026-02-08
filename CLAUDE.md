@@ -98,3 +98,6 @@ The scene grid isn't a cosmetic feature — it's foundational infrastructure:
 - Don't cross-pollinate SSE data streams — each UI component should own its data source
 - GameLog schema stores `sceneEntities` and `discoveries` per message for formatting persistence
 - `dotenv` requires cwd to be the repo root — always `cd` before `node server.js`
+- Fire-and-forget saves MUST use atomic `$set` (findByIdAndUpdate), never full-doc `.save()` — race condition risk
+- ALL OpenAI calls go through `gptService.js` — don't import openai directly elsewhere
+- Use `locationResolver.getSettlementAndLocation()` instead of copy-pasting the "find current location" pattern

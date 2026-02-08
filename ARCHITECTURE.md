@@ -2,114 +2,127 @@
 
 ## High-Level Overview
 
-Dragons is a browser-based AI RPG where players explore a procedurally generated fantasy world. The server generates worlds, regions, and settlements using OpenAI, then runs real-time gameplay through two AI pipelines that interpret player actions and stream narrative responses.
+Dragons is a browser-based AI RPG where players explore a procedurally generated fantasy world. The server generates worlds, regions, and settlements using OpenAI, then runs real-time gameplay through an AI pipeline that interprets player actions, executes tools against the database, and streams narrative responses.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                          BROWSER CLIENT                            │
+│                     BROWSER CLIENT (two frontends)                   │
 │                                                                     │
-│  landing.html ──► profile.html ──► index.html (game)               │
-│                                     ├── app.js (game logic, SSE)   │
-│                                     ├── MapViewer.js (location map)│
-│                                     └── auth.js (session UI)       │
+│  Svelte + Vite (client/)           Legacy (public/)                 │
+│  ├── Stores (game, grid, log,      ├── app.js (monolith)           │
+│  │   scene, quest, entity, modal)  ├── MapViewer.js                │
+│  ├── SSE Service                   └── grid-renderer.js            │
+│  ├── NarrativeLog + SceneGrid                                      │
+│  └── 20 components total           (to be removed after Svelte     │
+│                                     verified in browser)            │
 └──────────────────────────┬──────────────────────────────────────────┘
-                           │ HTTPS / SSE
+                           │ HTTP + SSE
 ┌──────────────────────────▼──────────────────────────────────────────┐
-│                        EXPRESS SERVER (server.js)                    │
+│                    EXPRESS SERVER (server.js)                        │
 │                                                                     │
-│  Middleware: Auth0 (OIDC) · CORS · express.json · ensureAuthenticated│
+│  Middleware: Auth0 (OIDC) · helmet · CORS · rate limiting           │
+│             express.json (1mb limit) · ensureAuthenticated           │
 │                                                                     │
 │  ┌─────────────────── Route Modules ──────────────────────┐        │
-│  │ auth.js      – login / logout / authorize / status     │        │
-│  │ worlds.js    – create & list worlds                    │        │
-│  │ regions.js   – regions, settlements, region hooks      │        │
-│  │ plots.js     – plots, quests, map, movement, settings  │        │
-│  │ characters.js – character CRUD & assignment             │        │
-│  │ gameLogs.js  – log history & /input/stream (gameplay)  │        │
-│  └────────────────────────────────────────────────────────┘        │
+│  │ auth.js       – login / logout / authorize / status     │        │
+│  │ worlds.js     – create & list worlds                    │        │
+│  │ regions.js    – regions, settlements, region hooks      │        │
+│  │ plots.js      – plots, quests, map, movement, settings  │        │
+│  │ characters.js – character CRUD & assignment              │        │
+│  │ gameLogs.js   – log history & /input/stream (gameplay)  │        │
+│  └─────────────────────────────────────────────────────────┘        │
 └──────────┬────────────────┬───────────────────┬─────────────────────┘
            │                │                   │
-    ┌──────▼──────┐  ┌──────▼──────┐  ┌────────▼────────┐
-    │  AI Layer   │  │  Services   │  │   Data Layer    │
-    │             │  │             │  │                 │
-    │ gameAgent   │  │ movement    │  │  MongoDB via    │
-    │ actionInt.  │  │ discovery   │  │  Mongoose       │
-    │ storyTeller │  │ layout      │  │                 │
-    │ noteTaker   │  │ vector      │  │  8 Models       │
-    │ factories   │  │ gptService  │  │  (see below)    │
-    └─────────────┘  └─────────────┘  └─────────────────┘
-           │                │                   │
-           └────────┬───────┘                   │
-                    │                           │
-             ┌──────▼──────┐                    │
-             │  OpenAI API │                    │
-             │  (gpt-5-mini)│                    │
-             └─────────────┘                    │
-                                         ┌──────▼──────┐
-                                         │  MongoDB    │
-                                         │  Atlas      │
-                                         └─────────────┘
+    ┌──────▼──────┐  ┌──────▼──────────┐  ┌────▼──────────┐
+    │  AI Layer   │  │  Services        │  │  Data Layer   │
+    │             │  │                  │  │               │
+    │ gameAgent   │  │ sceneManager     │  │ MongoDB via   │
+    │ actionInt.  │  │ gridMovement     │  │ Mongoose      │
+    │ storyTeller │  │ sceneContext     │  │               │
+    │ factories   │  │ movement         │  │ 9 Models      │
+    │             │  │ discovery        │  │ (see below)   │
+    │             │  │ quest            │  │               │
+    │             │  │ layout           │  │               │
+    │             │  │ sceneGrid        │  │               │
+    │             │  │ spatial          │  │               │
+    │             │  │ suggestions      │  │               │
+    │             │  │ toolFormatters   │  │               │
+    │             │  │ locationResolver │  │               │
+    │             │  │ plotInit         │  │               │
+    └──────┬──────┘  └──────┬──────────┘  └───────────────┘
+           │                │                      │
+           └────────┬───────┘                      │
+                    │                              │
+             ┌──────▼──────┐                       │
+             │  gptService  │── ALL OpenAI ──►  OpenAI API
+             │  (centralized)│                  (gpt-5-mini)
+             └──────────────┘                      │
+                                            ┌──────▼──────┐
+                                            │  MongoDB    │
+                                            │  Atlas      │
+                                            └─────────────┘
 ```
 
 ---
 
 ## Gameplay Loop
 
-Two AI pipelines handle player input, selected by the frontend:
+### Primary Pipeline: Game Agent (tool-calling)
 
-### Pipeline 1: Game Agent (tool-calling)
-
-Used for the primary gameplay input. The AI decides which tools to call, executes them against the database, then streams a narrative response grounded in real game state.
+Used for the primary gameplay input. The orchestrator coordinates extracted services to plan tools, execute them, stream narrative, and update game state.
 
 ```
 Player Input
     │
     ▼
 ┌──────────────────────────┐
-│  1. PLANNING CALL        │  Non-streaming OpenAI call with tool definitions
+│  1. PLANNING CALL        │  gptService.toolPlanPrompt() with tool definitions
 │     (gameAgent.js)       │  AI picks: get_scene, lookup_npc, move_player,
-│                          │  update_npc_relationship
+│                          │  skill_check, update_quest, update_relationship
 └──────────┬───────────────┘
            │ tool_calls[]
            ▼
 ┌──────────────────────────┐
-│  2. TOOL EXECUTION       │  Each tool reads/writes to MongoDB:
-│     (gameAgent.js)       │  - get_scene → Plot + Settlement (populated)
-│                          │  - lookup_npc → Plot.reputation + Settlement.pois
+│  2. TOOL EXECUTION       │  Each tool reads/writes MongoDB:
+│     (gameAgent.js)       │  - get_scene → sceneManager.executeGetScene()
+│                          │  - lookup_npc → Poi queries
 │                          │  - move_player → movementService.moveToLocation()
-│                          │  - update_npc_relationship → Plot.reputation
+│                          │  - skill_check → d20 dice roll mechanics
+│                          │  - update_quest → questService
+│                          │  - update_relationship → Plot.reputation
 └──────────┬───────────────┘
            │ tool results as context
            ▼
 ┌──────────────────────────┐
-│  3. NARRATIVE STREAM     │  Streaming OpenAI call with tool results + history
+│  3. NARRATIVE STREAM     │  gptService.streamMessages() with tool results + history
 │     (gameAgent.js)       │  Yields SSE chunks to client
 │                          │  Post-processing: state updates, discovery parsing
 └──────────┬───────────────┘
            │
            ▼
 ┌──────────────────────────┐
-│  4. SUGGESTION CALL      │  Non-streaming call to generate 3 suggested
-│     (gameAgent.js)       │  next actions for the player (non-blocking)
+│  4. BACKGROUND UPDATES   │  Fire-and-forget (non-blocking):
+│                          │  - suggestionService: categorized action suggestions
+│                          │  - sceneContextService: NPC arrivals/departures
+│                          │  - gridMovementService: player/NPC grid positions
+│                          │  - questService: quest seed generation
+│                          │  - discoveryService: parse narrative for new entities
 └──────────────────────────┘
 ```
 
-### Pipeline 2: Action Interpreter (streaming)
+### Secondary Pipeline: Action Interpreter (streaming)
 
 Used for "Ask GM" input type. Simpler single-pass streaming with rich context building.
 
 ```
-Player Input (action / speak / askGM)
+Player Input (askGM)
     │
     ▼
 ┌──────────────────────────┐
 │  interpretStream()       │  Builds rich context:
-│  (actionInterpreter.js)  │  - Recent message history (direct DB query)
+│  (actionInterpreter.js)  │  - Recent message history
 │                          │  - Location context with POIs and connections
-│                          │  - Time-of-day context
-│                          │  - Reputation/NPC context
-│                          │  - Movement detection (for action type)
-│                          │  - Exploration hints
+│                          │  - Time-of-day, reputation, exploration hints
 └──────────┬───────────────┘
            │
            ▼
@@ -122,8 +135,7 @@ Player Input (action / speak / askGM)
            │ SSE chunks
            ▼
 ┌──────────────────────────┐
-│  Post-processing         │  - updateCurrentState (activity, time)
-│                          │  - discoveryService.parseDiscoveries (async)
+│  Post-processing         │  - discoveryService.parseDiscoveries (async)
 └──────────────────────────┘
 ```
 
@@ -158,13 +170,6 @@ ensureLocations(settlementId)          ─── settlementsFactory.js
     ├── AI generates connections between locations
     ├── layoutService computes (x, y) positions via BFS
     └── Marks starting location
-            │
-            ▼
-storyOptions(plotId)                   ─── storyTeller.js
-    │
-    ├── AI generates 3 quest hooks
-    ├── noteTaker.saveQuests() persists to DB
-    └── questBuilder() fleshes out each quest (AI)
 ```
 
 ---
@@ -180,7 +185,7 @@ Region
  ├── name, description, terrain, climate
  ├── belongs to World
  ├── has one Ecosystem
- └── has many Settlements
+ └── has many Settlements (ObjectId refs)
 
 Settlement
  ├── name, description, size, population
@@ -188,36 +193,53 @@ Settlement
  ├── locations[] (embedded subdocuments)
  │    ├── name, type, description
  │    ├── connections[] (direction, locationName, distance)
- │    ├── pois[] (NPCs, objects, entrances, landmarks)
+ │    ├── interiorGrid (2D tile array), gridParams, gridGenerated
+ │    ├── ambientNpcs [{x, y}]
  │    ├── coordinates {x, y}
  │    └── discovered, isStartingLocation
  └── quests[]
+
+Poi (Point of Interest — standalone collection)
+ ├── name, type (npc/object/entrance/landmark), description
+ ├── settlement, locationId (where it lives)
+ ├── gridPosition {x, y}
+ ├── disposition, mannerisms (NPCs)
+ └── discovered
 
 Plot (a game session)
  ├── belongs to World
  ├── current_state
  │    ├── current_location (region, settlement, locationId, locationName)
+ │    ├── gridPosition {x, y} (player position on scene grid)
+ │    ├── sceneContext (tension, NPCs, events, outcomes)
+ │    ├── questState (active quest tracking)
  │    ├── current_time, current_activity
  │    └── environment_conditions, mood_tone
  ├── characters[]
  ├── quests[]
  ├── reputation (npcs[], factions[], locations[])
+ ├── gameLogs[] (ObjectId refs)
+ ├── milestones[]
  └── settings (tone, difficulty)
 
 Character
  ├── name, race, class, backstory
- └── attributes, inventory
+ ├── attributes, inventory
+ └── currentStatus (hp, mana, location)
 
 Quest
- ├── belongs to World
- ├── questTitle, description, status
- ├── triggers, keyActors, locations
- ├── outcomes[], consequences
- └── objectives[]
+ ├── belongs to World + Settlement
+ ├── status: seed → discovered → active → completed/failed/expired
+ ├── hooks[] (narrative hooks for AI)
+ ├── objectives[], progression
+ └── outcomes[], consequences
 
 GameLog
- ├── belongs to Plot
+ ├── belongs to Plot (indexed)
  ├── messages[] (author, content, timestamp)
+ │    ├── sceneEntities, discoveries, exits (per-message state)
+ │    ├── skillCheck (dice roll data)
+ │    └── questUpdates
  └── summary (AI-generated)
 
 Ecosystem
@@ -231,12 +253,13 @@ Ecosystem
 
 ```
 dragons/
-├── server.js                    # Express app entry point, middleware, DB connection
+├── server.js                    # Express app: helmet, rate limiting, CORS, routes
 ├── package.json
-├── render.yaml                  # Render.com deployment config
-├── railway.json                 # Railway deployment config
+├── AGENTS.md                    # Architecture overview and module map
+├── ARCHITECTURE.md              # This file — system design and data flow
+├── CLAUDE.md                    # Working principles, vision, gotchas
 │
-├── routes/                      # Express route modules
+├── routes/                      # Express route modules (thin handlers)
 │   ├── auth.js                  #   Login, logout, authorize, auth status
 │   ├── worlds.js                #   World generation and listing
 │   ├── regions.js               #   Regions, settlements, region hooks
@@ -247,19 +270,29 @@ dragons/
 ├── middleware/
 │   └── auth.js                  # ensureAuthenticated (Auth0 / SKIP_AUTH)
 │
-├── services/                    # Business logic
-│   ├── gptService.js            #   Shared OpenAI client, prompt functions, system prompt
-│   ├── gameAgent.js             #   Tool-calling AI agent (primary gameplay pipeline)
-│   ├── movementService.js       #   Player movement between locations
-│   ├── discoveryService.js      #   Parse AI responses for new NPCs/objects/locations
-│   ├── layoutService.js         #   BFS spatial layout for settlement maps
-│   └── vectorService.js         #   Grid vector utilities
+├── services/                    # Business logic (decomposed from gameAgent god file)
+│   ├── gptService.js            #   Centralized OpenAI access (ALL API calls)
+│   ├── gameAgent.js             #   Turn orchestrator: plan → execute → stream → update
+│   ├── sceneManager.js          #   Scene loading, first impressions, POI creation
+│   ├── gridMovementService.js   #   Player + NPC movement on tile grid
+│   ├── sceneContextService.js   #   Background scene context updates (atomic $set)
+│   ├── toolFormatters.js        #   Pure functions: tool display/result formatting
+│   ├── suggestionService.js     #   Categorized action suggestions
+│   ├── locationResolver.js      #   Shared "find current location" utility
+│   ├── plotInitService.js       #   New game initialization (GPT-heavy)
+│   ├── sceneGridService.js      #   Procedural grid generation (14 location types)
+│   ├── spatialService.js        #   Distance/direction calculations
+│   ├── questService.js          #   Quest lifecycle: seed → discover → active
+│   ├── discoveryService.js      #   Parse AI narrative for new entities
+│   ├── movementService.js       #   Location-to-location movement
+│   ├── layoutService.js         #   BFS layout for settlement SVG maps
+│   ├── tileConstants.js         #   Shared tile enum, walkability rules
+│   └── vectorService.js         #   Grid vector utilities (used by seed scripts)
 │
 ├── agents/
 │   ├── actionInterpreter.js     # Streaming AI pipeline (Ask GM)
 │   └── world/
-│       ├── storyTeller.js       #   Quest generation and story options
-│       ├── noteTaker.js         #   Quest persistence
+│       ├── storyTeller.js       #   World/region/settlement detail lookup
 │       └── factories/
 │           ├── worldFactory.js  #   World + region + settlement generation
 │           ├── regionsFactory.js#   Region description, settlement naming
@@ -267,33 +300,41 @@ dragons/
 │           └── mapFactory.js    #   Perlin noise terrain map generation
 │
 ├── db/
-│   ├── models/                  # Mongoose schemas
+│   ├── models/                  # Mongoose schemas (9 models)
 │   │   ├── World.js
 │   │   ├── Region.js
 │   │   ├── Settlement.js
 │   │   ├── Character.js
 │   │   ├── Plot.js
-│   │   ├── Quest.js
-│   │   ├── GameLog.js
-│   │   └── Ecosystem.js
+│   │   ├── Quest.js             #   Indexed: world + settlement + status
+│   │   ├── GameLog.js           #   Indexed: plotId
+│   │   ├── Ecosystem.js
+│   │   └── Poi.js
 │   ├── migrations/              # Database migrations (migrate-mongo)
 │   └── seeds/
 │       └── rootseeds.js
 │
-├── helpers/
-│   └── describeRegionAndSettlements.js
+├── client/                      # Svelte 5 + Vite frontend
+│   ├── src/
+│   │   ├── main.js              #   Svelte 5 mount() entry point
+│   │   ├── App.svelte           #   Root layout (two-column: narrative | grid)
+│   │   ├── app.css              #   CSS variables, animations, global styles
+│   │   ├── lib/stores/          #   8 Svelte stores (game, log, grid, scene, quest, etc.)
+│   │   ├── lib/services/        #   4 services (api, sse, narrativeFormatter, keyboard)
+│   │   ├── lib/gridConstants.js #   Tile display, entity colors
+│   │   └── lib/components/      #   20 components (NarrativeLog, SceneGrid, etc.)
+│   └── dist/                    #   Production build output
 │
-└── public/                      # Static frontend (vanilla JS)
-    ├── index.html               #   Main game page
-    ├── landing.html             #   Landing / login page
-    ├── profile.html             #   User profile page
-    ├── app.js                   #   Game client logic, SSE streaming
-    ├── MapViewer.js             #   Canvas-based location map renderer
-    ├── auth.js                  #   Auth UI helpers
-    ├── profile.js               #   Profile page logic
-    ├── landing.js               #   Landing page logic
-    ├── styles.css               #   Main stylesheet
-    └── map-styles.css           #   Map-specific styles
+├── public/                      # Legacy vanilla JS frontend (to be removed)
+│   ├── landing.html, profile.html
+│   ├── index.html, app.js, MapViewer.js
+│   └── styles.css, map-styles.css
+│
+└── memory/                      # Project documentation
+    ├── project-state.md
+    ├── decisions.md
+    ├── lessons.md
+    └── YYYY-MM-DD.md            # Daily session logs
 ```
 
 ---
@@ -302,10 +343,18 @@ dragons/
 
 **"The Indifferent World" philosophy** — The AI system prompt establishes a world that doesn't cater to the player. NPCs have their own motivations, consequences are logical rather than dramatic, and the world continues whether the player engages or not.
 
-**Two AI pipelines** — The Game Agent uses OpenAI's tool-calling to ground responses in actual database state (preventing hallucination about locations, NPCs, etc.). The Action Interpreter uses a simpler streaming approach with rich context for Ask GM queries.
+**Decomposed game engine** — The game agent was refactored from a 1,483-line god file into a ~730-line orchestrator that delegates to 6 focused services (sceneManager, gridMovementService, sceneContextService, toolFormatters, suggestionService, locationResolver).
+
+**Centralized OpenAI access** — All OpenAI API calls go through `gptService.js`, providing a single point for model configuration, error handling, and future metrics. No other file imports the OpenAI client directly.
+
+**Atomic updates for concurrent writes** — Background fire-and-forget services (sceneContextService, activity updates) use `findByIdAndUpdate({ $set })` instead of load-modify-save to prevent race conditions with concurrent writes.
+
+**Tool-calling pipeline** — The Game Agent uses OpenAI's tool-calling to ground responses in actual database state (preventing hallucination about locations, NPCs, etc.). Tools execute against MongoDB, and results are injected as context for narrative generation.
 
 **Lazy generation** — Regions, settlements, and locations are generated on-demand when a player first visits them, rather than all at creation time. This distributes the AI generation cost across gameplay.
 
 **Discovery parsing** — After each AI response, a background service extracts newly-mentioned NPCs, objects, and locations and persists them to the database, keeping the world state in sync with the narrative.
 
 **Deterministic movement** — Player movement is handled by `movementService` using the connection graph, not by the AI. The AI narrates the result but doesn't decide whether movement succeeds.
+
+**Security hardening** — helmet for security headers, express-rate-limit with 3 tiers (general 100/min, GPT endpoints 10/min, initialization 3/min), 1MB body limit.
