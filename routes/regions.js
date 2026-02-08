@@ -119,7 +119,7 @@ Respond in JSON format:
 });
 
 // Endpoint to fetch all settlements by region ID
-router.get('/settlements/region/:regionId', async (req, res) => {
+router.get('/settlements/region/:regionId', ensureAuthenticated, async (req, res) => {
     try {
         const { regionId } = req.params;
         const settlements = await Settlement.find({ region: regionId });

@@ -55,4 +55,6 @@ const GameLogSchema = new Schema({
     }
 });
 
+GameLogSchema.index({ plotId: 1 });
+
 module.exports = mongoose.model('GameLog', GameLogSchema);

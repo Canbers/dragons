@@ -22,7 +22,7 @@ const Region = new Schema({
     },
     description: String,
     short: String,
-    settlements: Array,
+    settlements: [{ type: Schema.Types.ObjectId, ref: 'Settlement' }],
     quests: [
         {
             quest: {
