@@ -136,9 +136,7 @@ const Plot = new Schema(
             type: mongoose.Schema.Types.ObjectId,
             ref: 'Quest'
         },
-        milestones: {
-            type: Array
-        },
+        milestones: [Schema.Types.Mixed],
         gameLogs: [
             {
                 type: mongoose.Schema.Types.ObjectId,

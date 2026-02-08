@@ -156,23 +156,6 @@ const streamPrompt = async function* (engine, message, options = {}) {
     }
 };
 
-const toolPrompt = async (engine, message, tools, options = {}) => {
-    const { tone = 'classic', difficulty = 'casual' } = options;
-    const systemPrompt = buildSystemPrompt(tone, difficulty);
-    const model = engine || GAME_MODEL;
-
-    const completion = await openai.chat.completions.create({
-        model: model,
-        messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: message }
-        ],
-        tools: tools,
-        tool_choice: "required"
-    });
-    return completion.choices[0].message;
-};
-
 const summarizeLogs = async (logs) => {
     const summaryPrompt = "Summarize the following game logs in a concise manner, preserving key events, decisions, and consequences: " + logs.map(log => log.content).join(' ');
     const completion = await openai.chat.completions.create({
@@ -190,7 +173,6 @@ module.exports = {
     prompt,
     simplePrompt,
     streamPrompt,
-    toolPrompt,
     summarizeLogs,
     buildSystemPrompt,
     GAME_MODEL,

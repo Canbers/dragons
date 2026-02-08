@@ -45,7 +45,10 @@ const Character = new Schema({
             type: Number,
             default: 0
         },
-
+        location: {
+            type: String,
+            default: ''
+        },
         statusEffects: [String]
     },
     originLocation: {

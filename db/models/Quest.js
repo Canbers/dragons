@@ -95,4 +95,6 @@ const Quest = new Schema(
     { timestamps: true }
 );
 
+Quest.index({ world: 1, settlement: 1, status: 1 });
+
 module.exports = mongoose.model('Quest', Quest);

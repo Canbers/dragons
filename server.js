@@ -5,6 +5,8 @@ const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const https = require('https');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 console.log('  [2/10] Loading mongoose...');
 const mongoose = require('mongoose');
 require('dotenv').config();
@@ -14,6 +16,10 @@ const app = express();
 const cors = require('cors');
 const ensureAuthenticated = require('./middleware/auth');
 
+// Security headers
+app.use(helmet({
+    contentSecurityPolicy: false // Allow inline scripts for legacy pages
+}));
 
 // MongoDB connection
 mongoose.connect(process.env.MONGO_URL, {
@@ -23,14 +29,13 @@ mongoose.connect(process.env.MONGO_URL, {
 .catch(err => console.log('MongoDB connection error:', err));
 
 // CORS configuration
+const PORT = process.env.PORT || 3000;
 const allowedOrigins = [
-    'http://localhost:3000',
-    'https://localhost:3000',
-    `http://localhost:${process.env.PORT || 3000}`,
-    `https://localhost:${process.env.PORT || 3000}`,
+    `http://localhost:${PORT}`,
+    `https://localhost:${PORT}`,
     'http://localhost:5173',
     'https://dragons.canby.ca',
-    process.env.AUTH0_ISSUER_BASE_URL // Include Auth0 callback URL
+    process.env.AUTH0_ISSUER_BASE_URL
 ];
 
 const corsOptions = {
@@ -48,9 +53,41 @@ const corsOptions = {
 // Apply CORS middleware first
 app.use(cors(corsOptions));
 
-// Other middleware
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// Body parsing with size limits
+app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: true, limit: '1mb' }));
+
+// Rate limiting
+const generalLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 100,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => req.oidc?.user?.sub || req.ip
+});
+
+const gptLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => req.oidc?.user?.sub || req.ip,
+    message: { error: 'Too many requests — please wait before submitting another action.' }
+});
+
+const initLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 3,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => req.oidc?.user?.sub || req.ip,
+    message: { error: 'Too many initialization requests — please wait.' }
+});
+
+app.use('/api', generalLimiter);
+app.use('/api/input/stream', gptLimiter);
+app.use('/api/plots/:id/initialize', initLimiter);
+app.use('/api/generate-world', initLimiter);
 
 // Static file serving
 app.use(express.static(path.join(__dirname, 'public')));
@@ -79,15 +116,6 @@ if (!process.env.SKIP_AUTH) {
     });
 }
 
-// Error handling middleware
-app.use((err, req, res, next) => {
-    console.error(`${new Date().toISOString()} - Error:`, err);
-    if (err.message === 'Not allowed by CORS') {
-        console.error(`Rejected Origin: ${req.headers.origin}`);
-    }
-    res.status(500).send('An unexpected error occurred');
-});
-
 // Default route
 app.get('/', (req, res) => {
     res.redirect('/landing.html');
@@ -103,11 +131,6 @@ app.get('/profile', ensureAuthenticated, (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'profile.html'));
 });
 
-// Serve index.html with world selection and authentication check
-app.get('/index.html', ensureAuthenticated, (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
-
 // Mount route modules
 app.use(require('./routes/auth'));
 app.use('/api', require('./routes/worlds'));
@@ -116,14 +139,21 @@ app.use('/api', require('./routes/plots'));
 app.use('/api', require('./routes/characters'));
 app.use('/api', require('./routes/gameLogs'));
 
-// Add a basic health check endpoint
+// Health check
 app.get('/health', (req, res) => {
     res.status(200).json({ status: 'OK' });
 });
 
+// Error handling middleware (AFTER routes)
+app.use((err, req, res, next) => {
+    console.error(`${new Date().toISOString()} - Error:`, err);
+    if (err.message === 'Not allowed by CORS') {
+        console.error(`Rejected Origin: ${req.headers.origin}`);
+    }
+    res.status(500).send('An unexpected error occurred');
+});
 
 // Environment-specific configuration
-const PORT = process.env.PORT || 3000;
 const NODE_ENV = process.env.NODE_ENV || 'development';
 
 if (NODE_ENV === 'production') {
