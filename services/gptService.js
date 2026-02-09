@@ -192,13 +192,30 @@ Respond in JSON:
     return JSON.parse(response.content);
 };
 
-const summarizeLogs = async (logs) => {
-    const summaryPrompt = "Summarize the following game logs in a concise manner, preserving key events, decisions, and consequences: " + logs.map(log => log.content).join(' ');
+const summarizeLogs = async (messages) => {
+    const entries = messages.map((msg, i) => {
+        let entry = `${i + 1}. [${msg.author}] ${msg.content}`;
+        if (msg.sceneEntities?.npcs?.length) entry += ` | NPCs: ${msg.sceneEntities.npcs.join(', ')}`;
+        if (msg.skillCheck) entry += ` | Skill check: ${msg.skillCheck.action} (${msg.skillCheck.difficulty}) → ${msg.skillCheck.result}`;
+        if (msg.discoveries?.length) entry += ` | Discoveries: ${msg.discoveries.map(d => d.name).join(', ')}`;
+        if (msg.questUpdates?.length) entry += ` | Quests: ${msg.questUpdates.map(q => `${q.title} (${q.status})`).join(', ')}`;
+        return entry;
+    }).join('\n');
+
     const completion = await openai.chat.completions.create({
         model: UTILITY_MODEL,
         messages: [
-            { role: "system", content: "You are summarizing game events for memory persistence. Focus on: key decisions made, consequences faced, NPC interactions, and world state changes." },
-            { role: "user", content: summaryPrompt }
+            {
+                role: "system",
+                content: `You summarize RPG game sessions for AI memory persistence. Write a concise summary (150-250 words) covering:
+- **What happened:** Key events, decisions, and their consequences
+- **NPCs:** Who was encountered, their attitudes, and how relationships changed
+- **World changes:** Locations discovered, items acquired/lost, quests progressed
+- **Active threads:** Unresolved situations, pending dangers, open questions
+
+Write in past tense. Be factual and specific — names, places, outcomes. Skip filler dialogue.`
+            },
+            { role: "user", content: `Summarize this game session:\n\n${entries}` }
         ]
     });
     return completion.choices[0].message.content;

@@ -43,7 +43,17 @@ const LocationSchema = new Schema({
     interiorGrid: { type: [[Number]], default: null },
     gridParams: { type: Schema.Types.Mixed, default: null },
     gridGenerated: { type: Boolean, default: false },
-    ambientNpcs: [{ x: Number, y: Number }]
+    ambientNpcs: [{ x: Number, y: Number }],
+    tensions: [{
+        _id: false,
+        description: String,
+        involvedNpcs: [String],
+        severity: {
+            type: String,
+            enum: ['simmering', 'active', 'boiling'],
+            default: 'simmering'
+        }
+    }]
 }, { _id: true });
 
 const Settlement = new Schema(

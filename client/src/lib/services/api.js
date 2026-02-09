@@ -64,11 +64,11 @@ export async function saveGameLog(plotId, logEntry) {
 
 // ========== Streaming (returns raw Response for SSE parsing) ==========
 
-export async function submitActionStream(input, inputType, plotId) {
+export async function submitActionStream(input, inputType, plotId, options = {}) {
   const res = await fetch('/api/input/stream', {
     method: 'POST',
     headers: getHeaders(true),
-    body: JSON.stringify({ input, inputType, plotId })
+    body: JSON.stringify({ input, inputType, plotId, ...options })
   });
   if (res.status === 401) {
     window.location.href = '/authorize';
@@ -144,4 +144,70 @@ export async function initializePlot(plotId) {
     headers: getHeaders(true)
   });
   return res;
+}
+
+// ========== Auth ==========
+
+export async function checkAuthStatus() {
+  return fetchJSON('/auth/status');
+}
+
+// ========== Characters ==========
+
+export async function getCharacters() {
+  return fetchJSON('/api/characters');
+}
+
+export async function createCharacter(data) {
+  return fetchJSON('/api/characters', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+export async function deleteCharacter(id) {
+  return fetchJSON(`/api/characters/${id}`, { method: 'DELETE' });
+}
+
+export async function assignCharacter(characterId, plotId) {
+  return fetchJSON('/api/assign-character', {
+    method: 'POST',
+    body: JSON.stringify({ characterId, plotId })
+  });
+}
+
+// ========== Worlds ==========
+
+export async function getWorlds() {
+  return fetchJSON('/api/worlds');
+}
+
+export async function getWorld(id) {
+  return fetchJSON(`/api/worlds/${id}`);
+}
+
+export async function createWorld(worldName) {
+  return fetchJSON('/api/generate-world', {
+    method: 'POST',
+    body: JSON.stringify({ worldName })
+  });
+}
+
+// ========== Regions ==========
+
+export async function getRegions(worldId) {
+  return fetchJSON(`/api/worlds/${worldId}/region-selection`);
+}
+
+export async function getRegionHooks(worldId) {
+  return fetchJSON(`/api/worlds/${worldId}/region-hooks`);
+}
+
+// ========== Create Plot ==========
+
+export async function createPlot(worldId, regionId) {
+  return fetchJSON('/api/plot', {
+    method: 'POST',
+    body: JSON.stringify({ worldId, regionId })
+  });
 }

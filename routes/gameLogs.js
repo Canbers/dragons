@@ -7,29 +7,29 @@ const GameLog = require('../db/models/GameLog.js');
 const actionInterpreter = require('../agents/actionInterpreter');
 const { summarizeLogs } = require('../services/gptService');
 const gameAgent = require('../services/gameAgent');
+const inputClassifier = require('../services/inputClassifier');
+const fastActionService = require('../services/fastActionService');
+const worldTickService = require('../services/worldTickService');
 
-// Fetch the most recent game log associated with a plot
+// Fetch recent game log messages for a plot (spans log boundaries)
 router.get('/game-logs/recent/:plotId', ensureAuthenticated, async (req, res) => {
     try {
-        console.log(`Received request for recent game logs with plotId: ${req.params.plotId}`);
         const plotId = req.params.plotId;
-        const limit = parseInt(req.query.limit, 10) || 20;  // Default to 20 if limit is not provided or invalid
+        const limit = parseInt(req.query.limit, 10) || 20;
         if (!mongoose.Types.ObjectId.isValid(plotId)) {
             return res.status(400).send('Invalid plotId format');
         }
 
-        const plot = await Plot.findById(plotId).populate({
-            path: 'gameLogs',
-            options: { sort: { _id: -1 }, limit: 1 }
-        });
+        const gameLogService = require('../services/gameLogService');
+        const messages = await gameLogService.getRecentMessages(plotId, limit, false);
 
-        if (!plot || !plot.gameLogs.length) {
-            console.log(`No game logs found for plotId: ${plotId}`);
+        if (!messages.length) {
             return res.status(404).send('No game logs found for this plot');
         }
 
-        const recentMessages = plot.gameLogs[0].messages.slice(-limit);  // Get the most recent messages up to the limit
-        res.json({ messages: recentMessages, logId: plot.gameLogs[0]._id });
+        // Get the current log ID for the client
+        const currentLog = await GameLog.findOne({ plotId }).sort({ _id: -1 });
+        res.json({ messages, logId: currentLog?._id });
     } catch (error) {
         console.error(`Error processing request for recent game logs: ${error.message}`);
         res.status(500).json({ error: error.message });
@@ -113,7 +113,7 @@ router.post('/game-logs', ensureAuthenticated, async (req, res) => {
 // Streaming endpoint for real-time AI responses
 router.post('/input/stream', ensureAuthenticated, async (req, res) => {
     try {
-        const { input, inputType, plotId } = req.body;
+        const { input, inputType, plotId, moveTarget } = req.body;
 
         // Set headers for SSE
         res.setHeader('Content-Type', 'text/event-stream');
@@ -124,12 +124,44 @@ router.post('/input/stream', ensureAuthenticated, async (req, res) => {
         if (inputType === 'askGM') {
             // Ask GM uses the old simple path — no tools needed
             const stream = actionInterpreter.interpretStream(input, 'askGM', plotId);
+            let fullResponse = '';
             for await (const chunk of stream) {
+                fullResponse += chunk;
                 res.write(`data: ${JSON.stringify({ chunk })}\n\n`);
             }
+            // Save both messages to game log
+            try {
+                const gameLogService = require('../services/gameLogService');
+                await gameLogService.saveMessage(plotId, { author: 'Player', content: input });
+                await gameLogService.saveMessage(plotId, { author: 'AI', content: fullResponse });
+            } catch (e) {
+                console.error('[AskGM] Game log save failed:', e.message);
+            }
+            res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
         } else {
-            // All player input (action + speech unified) goes through the game agent
-            const stream = gameAgent.processInput(input, plotId);
+            // Classify input to determine processing tier
+            const classification = await inputClassifier.classify(input, plotId, { moveTarget });
+
+            // Tier 0/1: fast path. Tier 2/3: full game agent.
+            let stream;
+            if (classification.tier <= 1) {
+                // Set up world tick callback — streams reactions after done
+                const worldTickCallback = (playerInput, actionType, result) => {
+                    worldTickService.check(plotId, playerInput, actionType, result, (reaction) => {
+                        try {
+                            res.write(`data: ${JSON.stringify({ world_reaction: reaction.narrative })}\n\n`);
+                        } catch (e) {
+                            // Connection may be closed
+                        }
+                    });
+                };
+                stream = fastActionService.execute(input, plotId, classification, { moveTarget, worldTickCallback });
+            } else {
+                // Cancel any pending world ticks — full agent handles its own context
+                worldTickService.cancel(plotId);
+                stream = gameAgent.processInput(input, plotId, { moveTarget });
+            }
+
             for await (const event of stream) {
                 switch (event.type) {
                     case 'tool_call':
@@ -165,14 +197,24 @@ router.post('/input/stream', ensureAuthenticated, async (req, res) => {
                     case 'quest_update':
                         res.write(`data: ${JSON.stringify({ quest_update: event.data })}\n\n`);
                         break;
+                    case 'grid_updated':
+                        res.write(`data: ${JSON.stringify({ grid_updated: true })}\n\n`);
+                        break;
+                    case 'world_reaction':
+                        res.write(`data: ${JSON.stringify({ world_reaction: event.content })}\n\n`);
+                        break;
                     case 'done':
-                        // handled below
+                        res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
                         break;
                 }
             }
+
+            // For fast-path actions, keep connection open briefly for world tick reactions
+            if (classification.tier <= 1) {
+                await new Promise(resolve => setTimeout(resolve, 3000));
+            }
         }
 
-        res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
         res.end();
     } catch (error) {
         console.error('[Stream] Error:', error.message);

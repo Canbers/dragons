@@ -17,6 +17,7 @@ const sceneGridService = require('../services/sceneGridService');
 const settlementsFactory = require('../agents/world/factories/settlementsFactory.js');
 const { initializePlot } = require('../services/plotInitService');
 const { getCurrentLocation } = require('../services/locationResolver');
+const { executeGetScene } = require('../services/sceneManager');
 
 // Fetch world and region details
 router.get('/world-and-region/:plotId', ensureAuthenticated, async (req, res) => {
@@ -338,6 +339,8 @@ router.get('/plots/:plotId/scene-grid', ensureAuthenticated, async (req, res) =>
                 id: p._id.toString(),
                 name: p.name,
                 type: p.type,
+                description: p.description || '',
+                disposition: p.disposition || '',
                 gridPosition: p.gridPosition,
                 discovered: p.discovered,
                 icon: p.icon || ''
@@ -650,6 +653,56 @@ router.post('/plots/:plotId/move', ensureAuthenticated, async (req, res) => {
                 timestamp: new Date()
             });
             await gameLog.save();
+        }
+
+        // Ensure destination has scene data (grid + POIs) — handles first visits
+        try {
+            await executeGetScene(req.params.plotId);
+
+            // Directional arrival: place player at door matching arrival direction
+            if (result.previousLocation) {
+                const freshPlot = await Plot.findById(req.params.plotId)
+                    .populate('current_state.current_location.settlement');
+                const settlement = freshPlot?.current_state?.current_location?.settlement;
+                if (settlement) {
+                    const { location: destLoc } = getCurrentLocation(freshPlot, settlement);
+                    if (destLoc?.interiorGrid && destLoc.connections?.length) {
+                        // Find which direction the previous location is from here
+                        const fromConn = destLoc.connections.find(c =>
+                            c.locationName?.toLowerCase() === result.previousLocation.name?.toLowerCase()
+                        );
+                        if (fromConn?.direction) {
+                            const arrivalEdge = fromConn.direction;
+                            const doors = sceneGridService.findDoors(destLoc.interiorGrid);
+                            const grid = destLoc.interiorGrid;
+                            const h = grid.length;
+                            const w = grid[0]?.length || 0;
+
+                            // Find a door on the arrival edge
+                            const edgeDoor = doors.find(d => {
+                                if (arrivalEdge === 'north' && d.y <= 1) return true;
+                                if (arrivalEdge === 'south' && d.y >= h - 2) return true;
+                                if (arrivalEdge === 'west' && d.x <= 1) return true;
+                                if (arrivalEdge === 'east' && d.x >= w - 2) return true;
+                                return false;
+                            });
+
+                            if (edgeDoor) {
+                                // Place player adjacent to the door (inside)
+                                const center = { x: Math.floor(w / 2), y: Math.floor(h / 2) };
+                                const adj = sceneGridService.findAdjacentWalkable(grid, edgeDoor, center, new Set());
+                                const pos = adj || edgeDoor;
+                                await Plot.findByIdAndUpdate(req.params.plotId, {
+                                    $set: { 'current_state.gridPosition': { x: pos.x, y: pos.y } }
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (sceneErr) {
+            console.error('[Move] Scene generation after move failed:', sceneErr.message);
+            // Non-fatal — move succeeded, grid just won't be ready
         }
 
         res.json(result);

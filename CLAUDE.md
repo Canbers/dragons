@@ -81,7 +81,7 @@ The scene grid isn't a cosmetic feature — it's foundational infrastructure:
 ## Tech Stack
 - **Backend:** Node.js, Express, MongoDB (Mongoose), Auth0, OpenAI API
 - **Frontend:** Svelte + Vite (migrating from vanilla JS in `public/`)
-- **Scene rendering:** rot.js for ASCII tile grids
+- **Scene rendering:** Konva.js with Kenney roguelike sprites (rot.js kept for backend grid gen)
 - **Key backend services:** See `AGENTS.md` for full module map
 
 ## Communication Style

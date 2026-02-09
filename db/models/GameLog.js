@@ -15,6 +15,11 @@ const MessageSchema = new Schema({
         type: String,
         required: true
     },
+    messageType: {
+        type: String,
+        enum: ['normal', 'quick_action', 'world_reaction', 'summary'],
+        default: 'normal'
+    },
     sceneEntities: {
         npcs: [String],
         objects: [String],
@@ -24,12 +29,12 @@ const MessageSchema = new Schema({
     },
     discoveries: [{
         name: String,
-        type: String,
+        type: { type: String },
         description: String
     }],
     skillCheck: {
         action: String,
-        type: String,
+        type: { type: String },
         difficulty: String,
         roll: Number,
         minPass: Number,

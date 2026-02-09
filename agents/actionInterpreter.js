@@ -1,5 +1,4 @@
 const Plot = require('../db/models/Plot');
-const GameLog = require('../db/models/GameLog');
 const Region = require('../db/models/Region');
 const Settlement = require('../db/models/Settlement');
 const Poi = require('../db/models/Poi');
@@ -38,23 +37,8 @@ const getRecentMessages = async (plotId, limit = 20) => {
     if (!plotId) {
         throw new Error('plotId is undefined');
     }
-    const logs = await GameLog.find({ plotId })
-        .sort({ _id: -1 })
-        .limit(3);
-
-    if (!logs.length) return [];
-
-    const allMessages = [];
-    for (const log of logs) {
-        for (const msg of log.messages) {
-            allMessages.push(msg);
-        }
-    }
-
-    // Sort by timestamp descending, take the most recent
-    allMessages.sort((a, b) => b.timestamp - a.timestamp);
-    const recent = allMessages.slice(0, limit).reverse();
-    return recent;
+    const gameLogService = require('../services/gameLogService');
+    return gameLogService.getRecentMessages(plotId, limit, true);
 };
 
 /**
@@ -322,7 +306,10 @@ const interpretStream = async function* (input, inputType, plotId) {
 
         // Build context
         const historyContext = recentMessages.length > 0
-            ? recentMessages.map(msg => `${msg.author}: ${msg.content}`).join('\n')
+            ? recentMessages.map(msg => {
+                if (msg.type === 'summary') return `[Earlier session: ${msg.content}]`;
+                return `${msg.author}: ${msg.content}`;
+            }).join('\n')
             : 'No previous history - this is the start of the adventure.';
 
         const currentState = plot.current_state || {};

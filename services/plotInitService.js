@@ -6,7 +6,6 @@
 const Plot = require('../db/models/Plot');
 const Region = require('../db/models/Region');
 const Settlement = require('../db/models/Settlement');
-const GameLog = require('../db/models/GameLog');
 const regionFactory = require('../agents/world/factories/regionsFactory');
 const settlementsFactory = require('../agents/world/factories/settlementsFactory');
 const movementService = require('./movementService');
@@ -84,17 +83,9 @@ async function initializePlot(plot, sendEvent) {
     // Create opening narrative and game log
     const openingMessage = `You arrive at ${finalLocationName} in ${settlementName}.\n\n${locationDesc}\n\nThe world stretches before you—alive, indifferent, and full of possibility. What will you do?`;
 
-    const gameLog = new GameLog({
-        plotId: plot._id,
-        messages: [{
-            author: 'AI',
-            content: openingMessage,
-            timestamp: new Date()
-        }]
-    });
-    await gameLog.save();
+    const gameLogService = require('./gameLogService');
+    await gameLogService.saveMessage(plot._id, { author: 'AI', content: openingMessage });
 
-    updatedPlot.gameLogs.push(gameLog._id);
     updatedPlot.status = 'ready';
     await updatedPlot.save();
 

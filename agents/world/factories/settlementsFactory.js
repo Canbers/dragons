@@ -498,6 +498,10 @@ const addPoi = async (settlementId, locationName, poiData) => {
         // Update existing POI
         if (poiData.description) existing.description = poiData.description;
         if (poiData.disposition && !existing.disposition) existing.disposition = poiData.disposition;
+        if (poiData.goal && !existing.goal) existing.goal = poiData.goal;
+        if (poiData.problem && !existing.problem) existing.problem = poiData.problem;
+        if (poiData.personality && !existing.personality) existing.personality = poiData.personality;
+        if (poiData.profession && !existing.profession) existing.profession = poiData.profession;
         if (poiData.icon) existing.icon = poiData.icon;
         if (poiData.type) existing.type = poiData.type;
         if (poiData.metadata) existing.metadata = { ...existing.metadata, ...poiData.metadata };
@@ -522,6 +526,10 @@ const addPoi = async (settlementId, locationName, poiData) => {
         type: poiData.type || 'other',
         description: poiData.description || '',
         disposition: poiData.disposition || '',
+        goal: poiData.goal || null,
+        problem: poiData.problem || null,
+        personality: poiData.personality || null,
+        profession: poiData.profession || null,
         icon: poiData.icon || '',
         persistent: poiData.persistent !== false,
         discovered: poiData.discovered === true,  // default false; only true when explicitly set

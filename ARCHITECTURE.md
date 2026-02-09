@@ -13,7 +13,7 @@ Dragons is a browser-based AI RPG where players explore a procedurally generated
 │  │   scene, quest, entity, modal)  ├── MapViewer.js                │
 │  ├── SSE Service                   └── grid-renderer.js            │
 │  ├── NarrativeLog + SceneGrid                                      │
-│  └── 20 components total           (to be removed after Svelte     │
+│  └── 18 components total           (to be removed after Svelte     │
 │                                     verified in browser)            │
 └──────────────────────────┬──────────────────────────────────────────┘
                            │ HTTP + SSE
@@ -322,7 +322,7 @@ dragons/
 │   │   ├── lib/stores/          #   8 Svelte stores (game, log, grid, scene, quest, etc.)
 │   │   ├── lib/services/        #   4 services (api, sse, narrativeFormatter, keyboard)
 │   │   ├── lib/gridConstants.js #   Tile display, entity colors
-│   │   └── lib/components/      #   20 components (NarrativeLog, SceneGrid, etc.)
+│   │   └── lib/components/      #   18 components (NarrativeLog, SceneGrid, etc.)
 │   └── dist/                    #   Production build output
 │
 ├── public/                      # Legacy vanilla JS frontend (to be removed)
