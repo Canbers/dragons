@@ -4,11 +4,13 @@
   import { messages, currentLogId, oldestLogId } from './lib/stores/logStore.js';
   import { gridData } from './lib/stores/gridStore.js';
   import { sceneContext } from './lib/stores/sceneStore.js';
+  import { authenticated, checkAuth } from './lib/stores/authStore.js';
   import * as api from './lib/services/api.js';
   import { submitAction } from './lib/services/sseService.js';
   import NarrativeLog from './lib/components/NarrativeLog.svelte';
   import ActionBar from './lib/components/ActionBar.svelte';
   import EntityMenu from './lib/components/EntityMenu.svelte';
+  import TileTooltip from './lib/components/TileTooltip.svelte';
   import SceneGrid from './lib/components/SceneGrid.svelte';
   import SceneGridHeader from './lib/components/SceneGridHeader.svelte';
   import CharacterStrip from './lib/components/CharacterStrip.svelte';
@@ -16,14 +18,20 @@
   import GameButtons from './lib/components/GameButtons.svelte';
   import Toast from './lib/components/Toast.svelte';
   import QuestJournal from './lib/components/QuestJournal.svelte';
-  import SettlementMap from './lib/components/SettlementMap.svelte';
+  import SettlementOverview from './lib/components/SettlementOverview.svelte';
+  import { travelTo } from './lib/services/travelService.js';
+  import { travelState } from './lib/stores/settlementStore.js';
   import SettingsModal from './lib/components/SettingsModal.svelte';
   import ReputationModal from './lib/components/ReputationModal.svelte';
   import StorySummary from './lib/components/StorySummary.svelte';
   import GameInitOverlay from './lib/components/GameInitOverlay.svelte';
+  import Landing from './lib/components/Landing.svelte';
+  import Profile from './lib/components/Profile.svelte';
   import { initKeyboard } from './lib/services/keyboard.js';
+  import { getDirectionPhrase } from './lib/gridConstants.js';
 
-  let loaded = $state(false);
+  let page = $state('loading'); // 'loading' | 'landing' | 'profile' | 'game'
+  let gameLoaded = $state(false);
   let error = $state(null);
   let needsInit = $state(false);
 
@@ -32,35 +40,72 @@
     const pId = params.get('plotId');
     const cId = params.get('characterId');
 
-    if (!pId || !cId) {
-      error = 'No plotId or characterId in URL. Add ?plotId=X&characterId=Y';
-      return;
+    // If URL has game params, go straight to game
+    if (pId && cId) {
+      page = 'game';
+      plotId.set(pId);
+      characterId.set(cId);
+
+      try {
+        const plotData = await api.getPlot(pId);
+        if (plotData) {
+          plot.set(plotData);
+          const status = plotData.status;
+          if (status === 'created' || status === 'error') {
+            needsInit = true;
+            return;
+          }
+        }
+        await loadGameData(pId, cId);
+      } catch (e) {
+        console.error('[Dragons] Init error:', e);
+        error = e.message;
+      }
+
+      return initKeyboard();
     }
 
-    plotId.set(pId);
-    characterId.set(cId);
+    // No game params — check auth to decide landing vs profile
+    const isAuth = await checkAuth();
+    page = isAuth ? 'profile' : 'landing';
+  });
 
+  function navigateTo(target, params = {}) {
+    if (target === 'game' && params.plotId && params.characterId) {
+      // Update URL and switch to game
+      const url = `/?plotId=${params.plotId}&characterId=${params.characterId}`;
+      window.history.pushState({}, '', url);
+      plotId.set(params.plotId);
+      characterId.set(params.characterId);
+      page = 'game';
+      startGame(params.plotId, params.characterId);
+    } else if (target === 'profile') {
+      window.history.pushState({}, '', '/');
+      page = 'profile';
+    } else if (target === 'landing') {
+      window.history.pushState({}, '', '/');
+      page = 'landing';
+    }
+  }
+
+  async function startGame(pId, cId) {
     try {
-      // Check plot status — may need initialization
       const plotData = await api.getPlot(pId);
       if (plotData) {
         plot.set(plotData);
-        const status = plotData.status;
-        if (status === 'created' || status === 'error') {
+        if (plotData.status === 'created' || plotData.status === 'error') {
           needsInit = true;
-          return; // Wait for init overlay to complete
+          return;
         }
       }
-
       await loadGameData(pId, cId);
     } catch (e) {
       console.error('[Dragons] Init error:', e);
       error = e.message;
     }
 
-    // Init keyboard shortcuts
-    return initKeyboard();
-  });
+    initKeyboard();
+  }
 
   async function loadGameData(pId, cId) {
     const gameInfo = await api.getGameInfo(pId, cId);
@@ -90,7 +135,7 @@
       if (ctx) sceneContext.set(ctx);
     } catch { /* no context yet */ }
 
-    loaded = true;
+    gameLoaded = true;
     console.log('[Dragons] App loaded. Character:', gameInfo?.character?.name);
   }
 
@@ -104,10 +149,9 @@
     }
   }
 
-  async function handleSubmit(text, inputType) {
+  async function handleSubmit(text, inputType, options = {}) {
     const pId = $plotId;
 
-    // Add player message to log immediately
     messages.update(m => [...m, {
       _id: 'player-' + Date.now(),
       author: 'Player',
@@ -115,11 +159,9 @@
       timestamp: new Date().toISOString()
     }]);
 
-    // Stream AI response
-    const result = await submitAction(text, inputType);
+    const result = await submitAction(text, inputType, options);
 
     if (result?.fullMessage) {
-      // Add final AI message to log
       const aiMsg = {
         _id: 'ai-' + Date.now(),
         author: 'AI',
@@ -131,7 +173,6 @@
         questUpdates: result.questUpdates?.length > 0 ? result.questUpdates : null
       };
 
-      // Add quest discoveries as questUpdates for consistency
       if (result.questDiscoveries?.length > 0) {
         const discoveryUpdates = result.questDiscoveries.map(q => ({
           questId: q.id, title: q.title, status: 'discovered'
@@ -141,21 +182,8 @@
 
       messages.update(m => [...m, aiMsg]);
 
-      // Save to server
-      const token = localStorage.getItem('authToken');
-      const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` };
-      await fetch('/api/game-logs', {
-        method: 'POST', headers,
-        body: JSON.stringify({ plotId: pId, author: 'Player', content: text })
-      });
-      const aiLogBody = { plotId: pId, author: 'AI', content: result.fullMessage };
-      if (result.sceneEntities) aiLogBody.sceneEntities = result.sceneEntities;
-      if (result.discoveries?.length > 0) aiLogBody.discoveries = result.discoveries;
-      if (result.skillCheck) aiLogBody.skillCheck = result.skillCheck;
-      if (aiMsg.questUpdates) aiLogBody.questUpdates = aiMsg.questUpdates;
-      await fetch('/api/game-logs', { method: 'POST', headers, body: JSON.stringify(aiLogBody) });
+      // Game log persistence is handled by the backend — no client-side save needed
 
-      // Refresh sidebar data
       try {
         const gameInfo = await api.getGameInfo(pId, $characterId);
         if (gameInfo) {
@@ -170,65 +198,95 @@
     handleSubmit(actionText, 'play');
   }
 
-  function handleDoorClick(exit) {
-    handleSubmit(`I go to ${exit.name}`, 'play');
+  function handleTileAction(text) {
+    handleSubmit(text, 'play');
+  }
+
+  function handleTileMove(tileX, tileY) {
+    const playerPos = $gridData?.playerPosition;
+    if (!playerPos) return;
+    const phrase = getDirectionPhrase(playerPos, { x: tileX, y: tileY });
+    handleSubmit(`I walk ${phrase}`, 'play', { moveTarget: { x: tileX, y: tileY } });
+  }
+
+  function handleTileTravel(exit) {
+    travelTo(null, exit.name);
   }
 </script>
 
-{#if needsInit}
-  <GameInitOverlay onComplete={handleInitComplete} />
-{:else if error}
-  <div class="error-screen">
-    <h2>Failed to load</h2>
-    <p>{error}</p>
-  </div>
-{:else if !loaded}
+{#if page === 'loading'}
   <div class="loading-screen">
     <div class="loading-dragon">&#x1F409;</div>
-    <p>Loading your adventure...</p>
+    <p>Loading...</p>
   </div>
-{:else}
-  <div class="game-layout">
-    <!-- LEFT COLUMN: Narrative -->
-    <div class="narrative-column">
-      <div class="game-header">
-        <h1 class="world-name">Dragons</h1>
-        <div class="header-status">
-          <span class="status-chip">{$currentTime}</span>
-          {#if $character}
-            <span class="status-chip health">HP {$character.currentStatus?.health ?? '--'}</span>
-          {/if}
+
+{:else if page === 'landing'}
+  <Landing {navigateTo} />
+
+{:else if page === 'profile'}
+  <Profile {navigateTo} />
+
+{:else if page === 'game'}
+  {#if needsInit}
+    <GameInitOverlay onComplete={handleInitComplete} />
+  {:else if error}
+    <div class="error-screen">
+      <h2>Failed to load</h2>
+      <p>{error}</p>
+    </div>
+  {:else if !gameLoaded}
+    <div class="loading-screen">
+      <div class="loading-dragon">&#x1F409;</div>
+      <p>Loading your adventure...</p>
+    </div>
+  {:else}
+    <div class="game-layout">
+      <!-- LEFT COLUMN: Narrative -->
+      <div class="narrative-column">
+        <div class="game-header">
+          <h1 class="world-name">Dragons</h1>
+          <div class="header-status">
+            <span class="status-chip">{$currentTime}</span>
+            {#if $character}
+              <span class="status-chip health">HP {$character.currentStatus?.health ?? '--'}</span>
+            {/if}
+          </div>
+        </div>
+
+        <div class="chat-section">
+          <NarrativeLog />
+          <ContextBar />
+          <ActionBar onSubmit={handleSubmit} />
         </div>
       </div>
 
-      <div class="chat-section">
-        <NarrativeLog />
+      <!-- RIGHT COLUMN: Scene Grid -->
+      <div class="scene-column">
+        <div class="grid-panel">
+          <SceneGridHeader />
+          <SceneGrid />
+          {#if $travelState.traveling}
+            <div class="travel-overlay">
+              <div class="travel-spinner"></div>
+              <span>Traveling to {$travelState.targetName}...</span>
+            </div>
+          {/if}
+        </div>
 
-        <ContextBar />
-
-        <ActionBar onSubmit={handleSubmit} />
+        <CharacterStrip />
+        <GameButtons />
       </div>
     </div>
 
-    <!-- RIGHT COLUMN: Scene Grid -->
-    <div class="scene-column">
-      <div class="grid-panel">
-        <SceneGridHeader />
-        <SceneGrid onDoorClick={handleDoorClick} />
-      </div>
-
-      <CharacterStrip />
-      <GameButtons />
-    </div>
-  </div>
-
-  <EntityMenu onAction={handleEntityAction} />
-  <Toast />
-  <QuestJournal />
-  <SettlementMap onAction={handleEntityAction} />
-  <SettingsModal />
-  <ReputationModal />
-  <StorySummary />
+    <EntityMenu onAction={handleEntityAction} />
+    <TileTooltip onAction={handleTileAction} onMove={handleTileMove} onTravel={handleTileTravel} />
+    <Toast />
+    <QuestJournal />
+    <SettlementOverview />
+    <SettingsModal />
+    <ReputationModal />
+    <StorySummary />
+  {/if}
 {/if}
 
 <style>
@@ -321,6 +379,7 @@
   }
 
   .grid-panel {
+    position: relative;
     flex: 1;
     display: flex;
     flex-direction: column;
@@ -329,6 +388,35 @@
     border: 1px solid var(--border-subtle);
     overflow: hidden;
     min-height: 0;
+  }
+
+  .travel-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    background: rgba(0, 0, 0, 0.75);
+    color: var(--accent-gold);
+    font-family: 'Crimson Text', serif;
+    font-size: 1.1rem;
+    z-index: 10;
+    border-radius: var(--radius-md);
+  }
+
+  .travel-spinner {
+    width: 28px;
+    height: 28px;
+    border: 3px solid rgba(212, 175, 55, 0.3);
+    border-top-color: var(--accent-gold);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
   }
 
   @media (max-width: 900px) {

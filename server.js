@@ -116,20 +116,7 @@ if (!process.env.SKIP_AUTH) {
     });
 }
 
-// Default route
-app.get('/', (req, res) => {
-    res.redirect('/landing.html');
-});
-
-// Serve landing page
-app.get('/landing.html', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'landing.html'));
-});
-
-// Serve profile.html with authentication check
-app.get('/profile', ensureAuthenticated, (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'profile.html'));
-});
+// Legacy landing/profile routes removed — Svelte SPA handles routing
 
 // Mount route modules
 app.use(require('./routes/auth'));
@@ -142,6 +129,21 @@ app.use('/api', require('./routes/gameLogs'));
 // Health check
 app.get('/health', (req, res) => {
     res.status(200).json({ status: 'OK' });
+});
+
+// SPA fallback — serve Svelte app for unmatched routes (production)
+const spaIndexPath = path.join(__dirname, 'client', 'dist', 'index.html');
+app.get('*', (req, res, next) => {
+    // Skip API routes and static files
+    if (req.path.startsWith('/api') || req.path.startsWith('/auth') || req.path.includes('.')) {
+        return next();
+    }
+    if (fs.existsSync(spaIndexPath)) {
+        res.sendFile(spaIndexPath);
+    } else {
+        // In dev, Vite serves the SPA — this fallback is for production builds
+        next();
+    }
 });
 
 // Error handling middleware (AFTER routes)

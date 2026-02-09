@@ -34,13 +34,21 @@ function formatToolResult(toolName, result) {
             if (result.npcsPresent?.length > 0) {
                 scene += `\nPEOPLE HERE: ${result.npcsPresent.map(n => {
                     let entry = n.name;
+                    if (n.profession) entry += ` (${n.profession})`;
                     if (n.description) entry += ` — ${n.description}`;
-                    if (n.disposition) entry += ` [disposition: ${n.disposition}]`;
+                    if (n.personality) entry += ` [personality: ${n.personality}]`;
+                    else if (n.disposition) entry += ` [disposition: ${n.disposition}]`;
+                    if (n.goal) entry += ` [wants: ${n.goal}]`;
                     return entry;
                 }).join('; ')}`;
             }
             if (result.objects?.length > 0) {
                 scene += `\nNOTABLE OBJECTS: ${result.objects.map(o => `${o.name} (${o.type})`).join('; ')}`;
+            }
+            if (result.tensions?.length > 0) {
+                scene += `\nLOCATION TENSIONS: ${result.tensions.map(t =>
+                    `${t.description} [${t.severity}]${t.involvedNpcs?.length ? ' (involves: ' + t.involvedNpcs.join(', ') + ')' : ''}`
+                ).join('; ')}`;
             }
             return scene;
         }
@@ -49,10 +57,15 @@ function formatToolResult(toolName, result) {
             if (!result.found) return `NPC "${result.name}": Not previously encountered. This is a new character.`;
             {
                 let npc = `NPC: ${result.name}`;
+                if (result.profession) npc += ` (${result.profession})`;
                 npc += `\nAttitude toward player: ${result.disposition}`;
+                if (result.personality) npc += `\nPersonality: ${result.personality}`;
+                if (result.goal) npc += `\nPersonal goal: ${result.goal}`;
+                if (result.problem) npc += `\nCurrent problem: ${result.problem}`;
                 npc += `\nLast interaction: ${result.lastInteraction}`;
                 if (result.description) npc += `\nDescription: ${result.description}`;
                 if (result.interactionCount > 0) npc += `\nTimes spoken to: ${result.interactionCount}`;
+                npc += `\n\nIMPORTANT: This NPC's personality, goal, and problem should color their dialogue. Don't dump backstory — let it emerge naturally.`;
                 return npc;
             }
 

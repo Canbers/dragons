@@ -7,3 +7,4 @@ export const streamingSkillCheck = writable(null);
 export const streamingToolCall = writable(null);
 export const oldestLogId = writable(null);
 export const currentLogId = writable(null);
+export const worldReaction = writable(null);

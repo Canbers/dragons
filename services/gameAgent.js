@@ -3,9 +3,13 @@
  *
  * Flow:
  * 1. Player sends input
- * 2. AI decides which tools to call (fast, non-streaming)
- * 3. Tools execute against the database
- * 4. AI generates narrative with tool results as context (streaming)
+ * 2. Speculative get_scene starts in parallel with planning
+ * 3. AI decides which tools to call (UTILITY_MODEL, fast)
+ * 4. Tools execute in parallel (move_player last)
+ * 5. AI generates narrative with tool results as context (streaming)
+ * 6. yield done → player unblocked
+ * 7. Late events: suggestions, discoveries, quest discovery (async)
+ * 8. Grid update + game log save
  *
  * Extracted services:
  * - sceneManager.js — executeGetScene, generateFirstImpression
@@ -18,7 +22,6 @@
 const Plot = require('../db/models/Plot');
 const Settlement = require('../db/models/Settlement');
 const Poi = require('../db/models/Poi');
-const GameLog = require('../db/models/GameLog');
 const { buildSystemPrompt, toolPlanPrompt, streamMessages, GAME_MODEL, UTILITY_MODEL } = require('./gptService');
 const questService = require('./questService');
 const spatialService = require('./spatialService');
@@ -146,7 +149,16 @@ async function executeLookupNpc(plotId, npcName) {
             name: { $regex: new RegExp(npcName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i') }
         });
         if (found) {
-            poiNpc = { name: found.name, description: found.description, foundAt: found.locationName, interactionCount: found.interactionCount };
+            poiNpc = {
+                name: found.name,
+                description: found.description,
+                personality: found.personality || found.disposition || null,
+                profession: found.profession || null,
+                goal: found.goal || null,
+                problem: found.problem || null,
+                foundAt: found.locationName,
+                interactionCount: found.interactionCount
+            };
         }
     }
 
@@ -161,6 +173,10 @@ async function executeLookupNpc(plotId, npcName) {
         lastInteraction: repNpc?.lastInteraction || 'None recorded',
         location: poiNpc?.foundAt || repNpc?.location || 'Unknown',
         description: poiNpc?.description || '',
+        personality: poiNpc?.personality || null,
+        profession: poiNpc?.profession || null,
+        goal: poiNpc?.goal || null,
+        problem: poiNpc?.problem || null,
         interactionCount: poiNpc?.interactionCount || 0
     };
 }
@@ -239,22 +255,8 @@ async function executeTool(plotId, toolName, args) {
 // ============ GET RECENT MESSAGES ============
 
 async function getRecentMessages(plotId, limit = 10) {
-    const logs = await GameLog.find({ plotId })
-        .sort({ _id: -1 })
-        .limit(3);
-
-    if (!logs.length) return [];
-
-    const allMessages = [];
-    for (const log of logs) {
-        for (const msg of log.messages) {
-            allMessages.push(msg);
-        }
-    }
-
-    allMessages.sort((a, b) => b.timestamp - a.timestamp);
-    const recent = allMessages.slice(0, limit).reverse();
-    return recent;
+    const gameLogService = require('./gameLogService');
+    return gameLogService.getRecentMessages(plotId, limit, true);
 }
 
 // ============ POST-NARRATIVE HELPERS ============
@@ -318,7 +320,7 @@ async function runDiscoveryParsing(plotId, fullResponse, input, featureTypes) {
  * Process player input through the agent pipeline.
  * Yields events: { type: 'tool_call' | 'chunk' | 'done', ... }
  */
-async function* processInput(input, plotId) {
+async function* processInput(input, plotId, options = {}) {
     const startTime = Date.now();
 
     const plot = await Plot.findById(plotId)
@@ -357,7 +359,10 @@ async function* processInput(input, plotId) {
     // Get conversation history
     const recentMessages = await getRecentMessages(plotId, 10);
     const historyContext = recentMessages.length > 0
-        ? recentMessages.map(msg => `${msg.author}: ${msg.content}`).join('\n')
+        ? recentMessages.map(msg => {
+            if (msg.type === 'summary') return `[Earlier session: ${msg.content}]`;
+            return `${msg.author}: ${msg.content}`;
+        }).join('\n')
         : 'This is the start of the adventure.';
 
     const locationName = plot.current_state?.current_location?.settlement?.name || 'Unknown';
@@ -366,10 +371,16 @@ async function* processInput(input, plotId) {
     const difficulty = plot.settings?.difficulty || 'casual';
     const sc = plot.current_state?.sceneContext;
 
-    console.log(`[GameAgent] Planning phase... (${Date.now() - startTime}ms)`);
-    yield { type: 'debug', category: 'ai', message: `Planning call → ${GAME_MODEL}`, detail: `Player: "${input}" | Location: ${currentLocName || locationName}` };
+    // Start speculative get_scene — needed ~95% of turns
+    const speculativeScene = executeGetScene(plotId).catch(err => {
+        console.error('[GameAgent] Speculative get_scene failed:', err.message);
+        return null;
+    });
 
-    // ---- STEP 1: Planning call ----
+    console.log(`[GameAgent] Planning phase... (${Date.now() - startTime}ms)`);
+    yield { type: 'debug', category: 'ai', message: `Planning call → ${UTILITY_MODEL} (+ speculative get_scene)`, detail: `Player: "${input}" | Location: ${currentLocName || locationName}` };
+
+    // ---- STEP 1: Planning call (UTILITY_MODEL for faster tool selection) ----
     const planMessages = [
         {
             role: "system",
@@ -395,7 +406,7 @@ ${historyContext}`
 
     let toolCalls = [];
     try {
-        const msg = await toolPlanPrompt(GAME_MODEL, planMessages, TOOLS, 'auto');
+        const msg = await toolPlanPrompt(UTILITY_MODEL, planMessages, TOOLS, 'auto');
         if (msg.tool_calls?.length > 0) {
             toolCalls = msg.tool_calls;
         }
@@ -415,56 +426,78 @@ ${historyContext}`
     console.log(`[GameAgent] Tools selected: ${toolNames.join(', ')} (${Date.now() - startTime}ms)`);
     yield { type: 'debug', category: 'tool', message: `AI selected ${toolNames.length} tool(s): ${toolNames.join(', ')}`, detail: `${Date.now() - startTime}ms elapsed` };
 
-    // ---- STEP 2: Execute tools ----
+    // ---- STEP 2: Execute tools (parallel where possible) ----
     const toolResultTexts = [];
     const rawToolResults = [];
     let movementNarration = null;
     let skillCheckData = null;
     let questUpdateData = null;
 
+    // Yield all display events immediately so player sees tool activity
     for (const tc of toolCalls) {
+        const args = JSON.parse(tc.function.arguments || '{}');
+        yield { type: 'tool_call', tool: tc.function.name, display: getToolDisplay(tc.function.name, args) };
+    }
+
+    // Partition: move_player must run last (invalidates scene data), everything else in parallel
+    const moveCall = toolCalls.find(tc => tc.function.name === 'move_player');
+    const otherCalls = toolCalls.filter(tc => tc.function.name !== 'move_player');
+
+    // Execute non-move tools in parallel
+    const parallelStart = Date.now();
+    const otherResults = await Promise.all(otherCalls.map(async (tc) => {
         const toolName = tc.function.name;
         const args = JSON.parse(tc.function.arguments || '{}');
-
-        yield { type: 'tool_call', tool: toolName, display: getToolDisplay(toolName, args) };
-
         const toolStart = Date.now();
-        const result = await executeTool(plotId, toolName, args);
+        // Use speculative result for get_scene
+        const result = (toolName === 'get_scene')
+            ? (await speculativeScene || await executeTool(plotId, 'get_scene', {}))
+            : await executeTool(plotId, toolName, args);
         const toolMs = Date.now() - toolStart;
+        return { toolName, args, result, toolMs };
+    }));
+
+    // Process parallel results — collect data and yield debug events
+    for (const { toolName, args, result, toolMs } of otherResults) {
         rawToolResults.push({ toolName, result });
         toolResultTexts.push(formatToolResult(toolName, result));
 
-        // Debug events
         if (toolName === 'get_scene') {
             const npcs = (result.npcsPresent || []).map(n => n.name).join(', ') || 'none';
             const exits = (result.exits || []).map(e => `${e.direction}→${e.name}`).join(', ') || 'none';
             yield { type: 'debug', category: 'db', message: `get_scene → ${result.location || '?'}`, detail: `NPCs: ${npcs} | Exits: ${exits} | ${toolMs}ms` };
         } else if (toolName === 'lookup_npc') {
             yield { type: 'debug', category: 'db', message: `lookup_npc → ${result.name || args.name}`, detail: `Found: ${result.found} | Disposition: ${result.disposition || '?'} | ${toolMs}ms` };
-        } else if (toolName === 'move_player') {
-            yield { type: 'debug', category: 'db', message: `move_player → ${args.destination}`, detail: `Success: ${result.success}${result.reason ? ' | ' + result.reason : ''} | ${toolMs}ms` };
         } else if (toolName === 'skill_check') {
             yield { type: 'debug', category: 'roll', message: `d20=${result.roll} (${result.difficulty} ${result.type}) → ${result.result}`, detail: `"${result.action}" | need ${result.minPass} to pass, ${result.strongPass} for crit | ${toolMs}ms` };
+            skillCheckData = result;
+            yield { type: 'skill_check', data: result };
         } else if (toolName === 'update_npc_relationship') {
             yield { type: 'debug', category: 'db', message: `update_npc → ${args.npc_name} = ${args.new_disposition}`, detail: `Reason: ${args.reason} | ${toolMs}ms` };
         } else if (toolName === 'update_quest') {
             yield { type: 'debug', category: 'db', message: `update_quest → "${args.quest_title}" (${args.update_type})`, detail: `${args.summary} | ${toolMs}ms` };
-        }
-
-        if (toolName === 'move_player' && result.success) {
-            movementNarration = result.narration;
-        }
-        if (toolName === 'skill_check') {
-            skillCheckData = result;
-            yield { type: 'skill_check', data: result };
-        }
-        if (toolName === 'update_quest' && result.success) {
-            questUpdateData = result.quest;
-            yield { type: 'quest_update', data: result.quest };
+            if (result.success) {
+                questUpdateData = result.quest;
+                yield { type: 'quest_update', data: result.quest };
+            }
         }
     }
 
-    console.log(`[GameAgent] Tools executed (${Date.now() - startTime}ms)`);
+    // Then move_player if needed (must run after parallel batch)
+    if (moveCall) {
+        const args = JSON.parse(moveCall.function.arguments || '{}');
+        const toolStart = Date.now();
+        const result = await executeTool(plotId, 'move_player', args);
+        const toolMs = Date.now() - toolStart;
+        rawToolResults.push({ toolName: 'move_player', result });
+        toolResultTexts.push(formatToolResult('move_player', result));
+        yield { type: 'debug', category: 'db', message: `move_player → ${args.destination}`, detail: `Success: ${result.success}${result.reason ? ' | ' + result.reason : ''} | ${toolMs}ms` };
+        if (result.success) {
+            movementNarration = result.narration;
+        }
+    }
+
+    console.log(`[GameAgent] Tools executed in parallel (${Date.now() - parallelStart}ms, total ${Date.now() - startTime}ms)`);
     yield { type: 'debug', category: 'system', message: `All tools executed`, detail: `${Date.now() - startTime}ms total` };
 
     // If movement happened, re-run get_scene at the NEW location
@@ -659,6 +692,17 @@ RESPONSE RULES:
             }
         }
 
+        // ---- PLAYER UNBLOCKED ----
+        yield { type: 'done' };
+        console.log(`[GameAgent] Done yielded — player unblocked (${Date.now() - startTime}ms)`);
+
+        // ---- Grid position update (immediately after done for fast refresh) ----
+        const lookedUpNpcNames = rawToolResults
+            .filter(r => r.toolName === 'lookup_npc' && r.result.found)
+            .map(r => r.result.name);
+        await updateGridPositions(plotId, input, didMove, lookedUpNpcNames, options.moveTarget);
+        yield { type: 'grid_updated' };
+
         // ---- Fire-and-forget background tasks ----
         updateSceneContextBackground(plotId, plot.current_state?.sceneContext || {}, enrichedContext, input, fullResponse);
 
@@ -672,8 +716,8 @@ RESPONSE RULES:
                 console.error('[Quest] Expiration failed:', err.message));
         }
 
-        // ---- Discovery + suggestions + quest discovery in parallel ----
-        yield { type: 'debug', category: 'ai', message: `Generating suggested actions → ${GAME_MODEL}` };
+        // ---- Post-narrative work — results streamed as late events ----
+        yield { type: 'debug', category: 'ai', message: `Generating suggestions + discoveries (late) → ${GAME_MODEL}` };
 
         const [discoveryResult, suggestionsResult, questDiscovery] = await Promise.all([
             runDiscoveryParsing(plotId, fullResponse, input, featureTypes),
@@ -681,6 +725,7 @@ RESPONSE RULES:
             questService.detectQuestDiscovery(plotId, fullResponse)
         ]);
 
+        // Yield late events — player is already unblocked, these update UI asynchronously
         if (discoveryResult) {
             yield { type: 'debug', category: 'db', message: `Discoveries: ${discoveryResult.discoveryEntities.length} new`, detail: discoveryResult.discoveryEntities.map(d => `${d.type}:${d.name}`).join(', ') };
             yield { type: 'discoveries', entities: discoveryResult.discoveryEntities };
@@ -696,7 +741,7 @@ RESPONSE RULES:
             if (suggestionsResult.flatActions.length > 0) {
                 yield { type: 'suggested_actions', actions: suggestionsResult.flatActions };
             }
-            console.log(`[GameAgent] Suggestions yielded (${Date.now() - startTime}ms)`);
+            console.log(`[GameAgent] Late suggestions yielded (${Date.now() - startTime}ms)`);
         }
 
         if (questDiscovery && questDiscovery.length > 0) {
@@ -708,18 +753,32 @@ RESPONSE RULES:
             yield { type: 'quest_update', data: questUpdateData };
         }
 
-        // ---- Update grid positions ----
-        const lookedUpNpcNames = rawToolResults
-            .filter(r => r.toolName === 'lookup_npc' && r.result.found)
-            .map(r => r.result.name);
-        await updateGridPositions(plotId, input, didMove, lookedUpNpcNames);
+        try {
+            const gameLogService = require('./gameLogService');
+            await gameLogService.saveMessage(plotId, { author: 'Player', content: input });
+
+            const aiMessage = { author: 'AI', content: fullResponse };
+            if (sceneEntities && (sceneEntities.npcs.length || sceneEntities.objects.length || sceneEntities.features.length || sceneEntities.locations.length)) {
+                aiMessage.sceneEntities = sceneEntities;
+            }
+            if (discoveryResult?.discoveryEntities?.length > 0) aiMessage.discoveries = discoveryResult.discoveryEntities;
+            if (skillCheckData) aiMessage.skillCheck = skillCheckData;
+            const allQuestUpdates = [];
+            if (questUpdateData) allQuestUpdates.push({ questId: questUpdateData.id, title: questUpdateData.title, status: questUpdateData.status });
+            if (questDiscovery?.length > 0) questDiscovery.forEach(q => allQuestUpdates.push({ questId: q.id, title: q.title, status: 'discovered' }));
+            if (allQuestUpdates.length > 0) aiMessage.questUpdates = allQuestUpdates;
+
+            await gameLogService.saveMessage(plotId, aiMessage);
+            console.log(`[GameAgent] Game log saved (${Date.now() - startTime}ms)`);
+        } catch (saveErr) {
+            console.error('[GameAgent] Game log save failed:', saveErr.message);
+        }
 
     } catch (error) {
         console.error('[GameAgent] Narrative streaming failed:', error.message);
         yield { type: 'chunk', content: 'The world falls silent for a moment...' };
+        yield { type: 'done' };
     }
-
-    yield { type: 'done' };
 }
 
 module.exports = { processInput, TOOLS };
